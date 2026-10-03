@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #faf6ec;
+  --ink: #111111;
+  --accent: #ffd02b;
+  --danger: #ff3b30;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Space Mono", ui-monospace, monospace;
+}
+
+.font-display {
+  font-family: "Archivo Black", "Space Mono", sans-serif;
+}
+
+.brutal-card {
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  background: #fff;
+}
+
+.brutal-btn {
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  background: #fff;
+  transition: transform 60ms steps(2), box-shadow 60ms steps(2);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--ink);
+}
+
+.brutal-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--ink);
+}
+
+.brutal-btn:focus-visible {
+  outline: 3px solid var(--danger);
+  outline-offset: 2px;
+}
+
+.brutal-progress-fill {
+  background-color: var(--accent);
+  background-image: repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.18) 0 8px, transparent 8px 16px);
+}
+
+.brutal-kbd {
+  display: inline-block;
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+  background: #fff;
+  padding: 0 0.4em;
+  font-weight: 700;
+}
+.brutal-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.brutal-btn[aria-pressed="true"] {
+  background: var(--accent);
+}
+
+.caret-block::after {
+  content: "";
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  background: var(--ink);
+  vertical-align: text-bottom;
+  margin-left: 1px;
+  animation: blink 1s steps(2) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret-block::after {
+    animation: none;
+  }
+  .brutal-btn {
+    transition: none;
+  }
+}
