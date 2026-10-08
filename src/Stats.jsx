@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase.js'
 import { formatMode, loadHistory } from './history.js'
 import PaceChart from './PaceChart.jsx'
+import PublicProfileControls from './PublicProfileControls.jsx'
 
 const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -59,6 +60,7 @@ export default function Stats({ user, onLogin, onBack, freshRun }) {
 
   return <div className="stats-page">
     <div className="page-heading"><div><h1 tabIndex={-1}>Your record.</h1><p>Find your pace. Pick a run to inspect it.</p></div><button className="brutal-btn" onClick={onBack}>Back to typing</button></div>
+    {user && supabase && <PublicProfileControls key={user.id} user={user} />}
     <div className="history-toolbar"><div className="segmented" role="group" aria-label="History source"><button aria-pressed={source === 'local'} onClick={() => changeSource('local')}>This device</button>{supabase && <button aria-pressed={source === 'cloud'} onClick={() => changeSource('cloud')}>Cloud</button>}</div><p className="muted">{source === 'local' ? 'Last 50 runs saved in this browser.' : 'Latest 200 runs from your account.'}</p></div>
     {source === 'cloud' && !user ? <section className="state-panel"><h2>Keep your runs across devices.</h2><p>Log in to view cloud history. Your local runs are available on this device.</p><button className="brutal-btn primary" onClick={onLogin}>Log in</button></section>
       : loading ? <p className="state-panel" role="status">Loading your cloud runs...</p>

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, ghostIndex, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
 import { formatMode, loadPbs, saveRun } from './history.js'
 import Stats from './Stats.jsx'
+import PublicProfile from './PublicProfile.jsx'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, supabase } from './supabase.js'
 
@@ -9,6 +10,7 @@ const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
 const WORDS_PER_PAGE = 20
 const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, now: Date.now(), result: null })
+const currentPage = () => window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
 
 export default function App() {
   const [duration, setDuration] = useState(60)
@@ -29,7 +31,8 @@ export default function App() {
   const [authMsg, setAuthMsg] = useState('')
   const [authPending, setAuthPending] = useState(false)
   const [authLoading, setAuthLoading] = useState(() => !!supabase && window.location.pathname === '/auth/callback')
-  const [page, setPage] = useState(() => window.location.pathname === '/stats' ? 'stats' : 'type')
+  const [page, setPage] = useState(currentPage)
+  const [publicHandle, setPublicHandle] = useState(() => window.location.pathname.slice(3))
   const [freshRun, setFreshRun] = useState(0)
   const [saveStatus, setSaveStatus] = useState('')
   const inputRef = useRef(null)
@@ -132,7 +135,11 @@ export default function App() {
   useEffect(() => { if (run.result && page === 'type') resultRef.current?.focus() }, [run.result, page])
 
   useEffect(() => {
-    const onPop = () => setPage(window.location.pathname === '/stats' ? 'stats' : 'type')
+    const onPop = () => {
+      setPage(currentPage())
+      setPublicHandle(window.location.pathname.slice(3))
+      requestAnimationFrame(() => document.querySelector('main h1')?.focus())
+    }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
@@ -262,7 +269,7 @@ export default function App() {
         <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && (user ? <button onClick={logout}>Log out</button> : <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>)}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
-        {page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : <>
+        {page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : <>
           <div className="test-heading"><h1 tabIndex={-1}>Less talk. More type.</h1><p>Beat the clock. Then beat yourself.</p></div>
           <div className="test-settings">
             <fieldset disabled={active}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount)}>{d}<span>s</span></button>)}</div></fieldset>

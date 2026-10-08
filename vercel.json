@@ -1,4 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [{ "source": "/auth/callback", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/auth/callback", "destination": "/index.html" },
+    { "source": "/stats", "destination": "/index.html" },
+    { "source": "/u/:handle", "destination": "/index.html" }
+  ]
 }

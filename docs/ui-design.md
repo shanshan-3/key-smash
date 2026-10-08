@@ -15,3 +15,4 @@ ENERGY 3 / RHYTHM 2 / MOTION 1.
 - The fixed light theme follows the existing spec; a theme toggle remains out of scope.
 - Tab restarts only inside the typing input or from the results surface; Shift+Tab and Escape allow keyboard navigation out of the test.
 - Guests can inspect their last 50 local runs. Cloud history is a separate authenticated source, with explicit loading and retry states.
+- Public profile controls sit above history so an empty run list never hides publishing. Public aggregates reuse the flat summary rows; zero-run profiles show no measured averages. Share URLs remain selectable if clipboard access fails.

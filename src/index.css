@@ -124,6 +124,16 @@ summary { cursor: pointer; min-height: 44px; display: list-item; padding: 12px 4
 .mode-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: .75rem; font-weight: 700; }
 select, .auth-dialog input { border: 2px solid var(--ink); border-radius: 0; background: white; color: var(--ink); min-height: 44px; padding: 8px 12px; max-width: 100%; }
 .history-summary { grid-template-columns: repeat(3, 1fr); }
+.profile-controls { margin-top: 30px; border: 3px solid var(--ink); padding: 24px; font-size: .8rem; line-height: 1.8; }
+.profile-controls p { margin: 12px 0; }
+.profile-controls label { display: block; font-weight: 700; margin-top: 16px; }
+.profile-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
+.profile-actions input { flex: 1 1 220px; min-width: 0; width: 100%; border: 2px solid var(--ink); background: white; padding: 10px 12px; min-height: 44px; font-size: 1rem; border-radius: 0; }
+.profile-controls [role="alert"], #handle-feedback { color: var(--danger); }
+.profile-controls p:empty { margin: 0; }
+.public-profile .state-panel { margin-top: 30px; }
+.public-profile > .muted { font-size: .75rem; line-height: 1.8; }
+.public-profile h1 { overflow-wrap: anywhere; }
 .stats-page section + section { margin-top: 32px; }
 .section-heading { border-bottom: 2px solid var(--ink); padding-bottom: 12px; }
 .section-heading p, .section-heading > span { font-size: .75rem; line-height: 1.8; }
@@ -162,6 +172,9 @@ th:first-child, td:first-child { padding-left: 0; }
   .test-settings { gap: 18px 28px; }
 }
 @media (max-width: 600px) {
+  .profile-controls { padding: 18px; }
+  .public-profile .history-summary { grid-template-columns: 1fr; }
+  .public-profile .history-summary > div + div { border-top: 1px solid var(--rule); }
   .app-shell { padding: 0 18px; }
   .masthead { padding: 20px 0 16px; gap: 8px; flex-wrap: wrap; }
   nav { gap: 0; }
