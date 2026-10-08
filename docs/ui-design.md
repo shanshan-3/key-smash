@@ -16,3 +16,4 @@ ENERGY 3 / RHYTHM 2 / MOTION 1.
 - Tab restarts only inside the typing input or from the results surface; Shift+Tab and Escape allow keyboard navigation out of the test.
 - Guests can inspect their last 50 local runs. Cloud history is a separate authenticated source, with explicit loading and retry states.
 - Public profile controls sit above history so an empty run list never hides publishing. Public aggregates reuse the flat summary rows; zero-run profiles show no measured averages. Share URLs remain selectable if clipboard access fails.
+- Public records lead with an oversized handle, four ruled totals, and numbered score rows for the most-practiced modes. All records expand inline; narrow screens use a two-column ledger and stacked score rows.

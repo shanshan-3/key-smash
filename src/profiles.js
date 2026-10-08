@@ -33,5 +33,5 @@ export function savePublication(id, handle, published, signal) {
 
 export function loadPublicProfile(handle, signal) {
   if (!supabase) return Promise.reject(new Error('Cloud is not configured'))
-  return profileRequest(supabase.rpc('get_public_profile', { requested_handle: handle }).maybeSingle(), signal)
+  return profileRequest(supabase.rpc('get_profile_dashboard', { requested_handle: handle }).maybeSingle(), signal)
 }

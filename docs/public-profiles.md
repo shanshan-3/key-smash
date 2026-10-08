@@ -1,10 +1,17 @@
 # Public profile deployment
 
-Apply migrations 0001–0004 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0005 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
 security-definer function can aggregate results through row-level security.
+
+Migration 0005 adds `get_profile_dashboard` and an owner-results lookup index.
+Apply it before deploying the ledger frontend. It retains `get_public_profile`
+unchanged so the previous frontend works before and after the migration.
+Do not deploy the new frontend first: a missing dashboard RPC produces the
+public page's retryable request error. Private history and publishing controls
+continue to use their existing endpoints.
 
 Deploy the frontend and `vercel.json` together. The `/stats` and `/u/:handle`
 rewrites serve the application on direct navigation and refresh. Other hosts
@@ -13,9 +20,14 @@ need equivalent SPA fallbacks for these paths.
 Before the migration is available, profile settings show their own error and
 retry action. Private local/cloud history continues independently.
 
-The public RPC returns only a handle, cloud run count, rounded whole-number
-average WPM, and average accuracy rounded to one decimal place. It includes
-every cloud run across modes. No runs means null averages, rendered as dashes.
+The dashboard RPC returns only a handle, cloud run count, rounded whole-number
+average WPM, average accuracy rounded to one decimal place, measured typing
+seconds rounded to a whole second, and personal-best aggregates. Each best
+contains its mode, run count, winning WPM, and accuracy from the same run.
+WPM wins first, accuracy breaks ties, and the smallest internal result ID breaks
+remaining ties without being returned. It includes every cloud run across modes.
+Missing elapsed values are not estimated. No measured elapsed time returns null;
+no runs means null averages and an empty record list.
 Unknown and unpublished handles both return no row. Requests use no application
 cache; unpublishing takes effect on subsequent lookups. An already open page
 refreshes its data on reload or navigation, rather than polling.
@@ -23,8 +35,12 @@ refreshes its data on reload or navigation, rather than polling.
 Handles are lowercased before submission and validated again in the database.
 The unique index arbitrates concurrent claims. An unavailable handle is reported
 inline after submission; no anonymous availability endpoint exposes private
-handles. Unpublishing retains the handle. Renaming and public personal bests
-remain separate tickets.
+handles. Unpublishing retains the handle. Renaming remains a separate ticket.
+
+Passing a normalized handle to the dashboard RPC returns only a published
+profile. A null handle returns only the authenticated caller's own profile,
+including unpublished profiles; anonymous callers receive no row. The owner
+dashboard UI, trends, activity, and race actions remain separate tickets.
 
 ## Verification — 2026-10-08
 

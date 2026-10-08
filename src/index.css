@@ -134,6 +134,29 @@ select, .auth-dialog input { border: 2px solid var(--ink); border-radius: 0; bac
 .public-profile .state-panel { margin-top: 30px; }
 .public-profile > .muted { font-size: .75rem; line-height: 1.8; }
 .public-profile h1 { overflow-wrap: anywhere; }
+.profile-masthead { align-items: end; }
+.profile-masthead > div { min-width: 0; flex: 1 1 100%; }
+.profile-masthead h1 { font-size: clamp(2rem, 7vw, 5.5rem); line-height: 1.05; letter-spacing: -.055em; }
+.profile-masthead .profile-kicker { margin: 0 0 18px; text-transform: uppercase; letter-spacing: .08em; font-size: .7rem; }
+.profile-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 32px; border-top: 4px solid var(--ink); border-bottom: 2px solid var(--ink); }
+.profile-totals > div { padding: 24px 16px; min-width: 0; }
+.profile-totals > div:first-child { padding-left: 0; }
+.profile-totals > div + div { border-left: 1px solid var(--rule); }
+.profile-totals dt { font-size: .7rem; color: var(--muted); line-height: 1.8; }
+.profile-totals dd { font-family: "Archivo Black", Arial, sans-serif; font-size: clamp(1.2rem, 3vw, 2.4rem); letter-spacing: -.04em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; margin-top: 8px; }
+.profile-data-note { color: var(--muted); font-size: .75rem; line-height: 1.8; margin-top: 16px; max-width: 75ch; }
+.profile-records { margin-top: 44px; }
+.record-sheet { list-style: none; margin: 0; padding: 0; }
+.record-sheet li { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 160px; align-items: center; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--rule); }
+.record-number { color: var(--muted); font-size: .75rem; }
+.record-mode h3 { font-size: .9rem; line-height: 1.8; }
+.record-mode > span, .record-accuracy { font-size: .75rem; color: var(--muted); line-height: 1.8; }
+.record-wpm { font-family: "Archivo Black", Arial, sans-serif; font-size: 2.5rem; font-weight: 400; letter-spacing: -.05em; white-space: nowrap; }
+.record-wpm small { font-family: "Space Mono", monospace; font-size: .65rem; letter-spacing: 0; }
+.record-accuracy { text-align: right; }
+.all-records { margin-top: 20px; }
+.all-records summary { font-size: .8rem; font-weight: 700; }
+.all-records caption { text-align: left; color: var(--muted); padding: 14px 0; line-height: 1.8; }
 .stats-page section + section { margin-top: 32px; }
 .section-heading { border-bottom: 2px solid var(--ink); padding-bottom: 12px; }
 .section-heading p, .section-heading > span { font-size: .75rem; line-height: 1.8; }
@@ -172,6 +195,13 @@ th:first-child, td:first-child { padding-left: 0; }
   .test-settings { gap: 18px 28px; }
 }
 @media (max-width: 600px) {
+  .profile-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-totals > div { padding: 18px 12px; }
+  .profile-totals > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .profile-totals > div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  .record-sheet li { grid-template-columns: 24px minmax(0, 1fr); gap: 8px 14px; padding: 20px 0; }
+  .record-wpm, .record-accuracy { grid-column: 2; text-align: left; }
+  .record-wpm { font-size: 2.2rem; }
   .profile-controls { padding: 18px; }
   .public-profile .history-summary { grid-template-columns: 1fr; }
   .public-profile .history-summary > div + div { border-top: 1px solid var(--rule); }
