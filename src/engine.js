@@ -25,8 +25,37 @@ export function scoreRun({ correctChars, keystrokes, seconds }) {
 }
 
 // ponytail: typed-string model only, per-key timestamps if latency heatmap ever matters
-export function canDelete({ cursor, wordStart }) {
-  return cursor > wordStart
+export function canDelete({ cursor, pageStart }) {
+  return cursor >= pageStart
+}
+
+// ponytail: O(n) rescan, per-word diff if N grows past ~500 words
+export function correctCount(target, typed) {
+  let n = 0
+  for (let i = 0; i < typed.length; i++) if (typed[i] === target[i]) n++
+  return n
+}
+
+export function perSecondWpm({ correctDelta, keyDelta, seconds = 1 }) {
+  return {
+    net: seconds > 0 ? Math.round((Math.max(0, correctDelta) / 5) * 60 / seconds) : 0,
+    raw: seconds > 0 ? Math.round((Math.max(0, keyDelta) / 5) * 60 / seconds) : 0,
+  }
+}
+
+export function sampleProgress(samples, { seconds, correctChars, keystrokes }) {
+  const previous = samples.at(-1) || { second: 0, correctChars: 0, keystrokes: 0 }
+  if (seconds <= previous.second) return samples
+  return [...samples, {
+    second: seconds,
+    correctChars,
+    keystrokes,
+    ...perSecondWpm({
+      correctDelta: correctChars - previous.correctChars,
+      keyDelta: keystrokes - previous.keystrokes,
+      seconds: seconds - previous.second,
+    }),
+  }]
 }
 
 export function consistencyFromSamples(samples) {
@@ -35,4 +64,30 @@ export function consistencyFromSamples(samples) {
   if (mean <= 0) return 0
   const variance = samples.reduce((a, b) => a + (b - mean) * (b - mean), 0) / samples.length
   return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.sqrt(variance) / mean))))
+}
+
+export function ghostIndex({ wpm, seconds }) {
+  if (wpm <= 0 || seconds <= 0) return 0
+  return Math.floor((wpm * 5 * seconds) / 60)
+}
+
+export const pbKey = (n, secs) => `time-${n}w-${secs}s`
+
+// ponytail: O(k log k) sort, heap if missed keys ever grow past ~100
+export function rankMissed(missed, limit = 12) {
+  return Object.entries(missed).sort((a, b) => b[1] - a[1]).slice(0, limit)
+}
+
+export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, samples = [], elapsed = duration }) {
+  return {
+    wpm,
+    acc,
+    mode: pbKey(wordCount, duration),
+    duration_s: duration,
+    word_count: wordCount,
+    missed_keys: missed,
+    seed,
+    samples,
+    elapsed_s: elapsed,
+  }
 }

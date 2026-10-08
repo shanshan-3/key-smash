@@ -1,362 +1,323 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { consistencyFromSamples, scoreRun, streamWords } from './engine.js'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, ghostIndex, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
+import { formatMode, loadPbs, saveRun } from './history.js'
+import Stats from './Stats.jsx'
+import PaceChart from './PaceChart.jsx'
+import { callbackUrl, supabase } from './supabase.js'
 
 const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
 const WORDS_PER_PAGE = 20
-const PB_KEY = 'keysmash-pb-v1'
-
-const QUOTE_S = [
-  'the quick brown fox jumps over the lazy dog and runs into the woods',
-  'i like to type fast words on my loud old keyboard every day',
-  'she sells fresh bread and warm soup at the small corner shop',
-  'we walk along the river when the sun is low and gold',
-  'code is just writing thoughts that a machine can follow',
-]
-
-const QUOTE_M = [
-  'there is a quiet house at the end of the street where an old cat sleeps in the sun all afternoon without a single worry in the world',
-  'when the rain starts to fall the city slows down and people open umbrellas like flowers blooming upside down along the sidewalk',
-  'he learned to type by copying pages from old books letter by letter until his fingers knew the keys better than his eyes knew the page',
-  'the night train moves through dark fields and small towns while passengers dream of stations they have never seen before',
-  'a good test is short enough to finish and long enough to matter so type steady and let your hands find their own rhythm',
-]
-
-function correctCount(target, typed) {
-  let n = 0
-  for (let i = 0; i < typed.length; i++) if (typed[i] === target[i]) n++
-  return n
-}
+const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, now: Date.now(), result: null })
 
 export default function App() {
   const [duration, setDuration] = useState(60)
   const [wordCount, setWordCount] = useState(60)
-  const [mode, setMode] = useState('time')
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
-  const [words, setWords] = useState(() => streamWords(seed, 60))
-  const [typed, setTyped] = useState('')
-  const [presses, setPresses] = useState(0)
-  const [pageIndex, setPageIndex] = useState(0)
-  const [startedAt, setStartedAt] = useState(null)
-  const [now, setNow] = useState(Date.now())
-  const [finished, setFinished] = useState(false)
-  const [pbInfo, setPbInfo] = useState(null)
-  const [con, setCon] = useState(null)
-  const inputRef = useRef(null)
-  const secRef = useRef(0)
+  const words = useMemo(() => streamWords(seed, wordCount), [seed, wordCount])
+  const target = words.join(' ')
+  const [run, setRun] = useState(idleRun)
+  const runRef = useRef(run)
   const samplesRef = useRef([])
   const missedRef = useRef({})
+  const [ghost, setGhost] = useState(null)
+  const [focused, setFocused] = useState(false)
+  const [caret, setCaret] = useState(null)
+  const [user, setUser] = useState(null)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [email, setEmail] = useState('')
+  const [authMsg, setAuthMsg] = useState('')
+  const [authPending, setAuthPending] = useState(false)
+  const [authLoading, setAuthLoading] = useState(() => !!supabase && window.location.pathname === '/auth/callback')
+  const [page, setPage] = useState(() => window.location.pathname === '/stats' ? 'stats' : 'type')
+  const [freshRun, setFreshRun] = useState(0)
+  const [saveStatus, setSaveStatus] = useState('')
+  const inputRef = useRef(null)
+  const cardRef = useRef(null)
+  const resultRef = useRef(null)
+  const dialogRef = useRef(null)
+  const authTriggerRef = useRef(null)
+  const totalPages = Math.ceil(wordCount / WORDS_PER_PAGE)
+  const pageStart = run.pageIndex === 0 ? 0 : words.slice(0, run.pageIndex * WORDS_PER_PAGE).join(' ').length + 1
+  const pageWords = words.slice(run.pageIndex * WORDS_PER_PAGE, (run.pageIndex + 1) * WORDS_PER_PAGE)
+  const elapsed = run.startedAt === null ? 0 : Math.min(duration, (run.now - run.startedAt) / 1000)
+  const live = scoreRun({ correctChars: correctCount(target, run.typed), keystrokes: run.presses, seconds: Math.max(elapsed, 0.5) })
+  const active = run.startedAt !== null && !run.result
+  const pb = loadPbs()[pbKey(wordCount, duration)] || null
+  const progress = Math.min(100, run.typed.length / target.length * 100)
+  const completedWords = run.result && run.typed.length === target.length ? wordCount : (run.typed.match(/ /g) || []).length
 
-  const target = useMemo(() => words.join(' '), [words])
-  const totalPages = Math.max(1, Math.ceil(words.length / WORDS_PER_PAGE))
-  const pageStart = useMemo(() => {
-    if (pageIndex === 0) return 0
-    return words.slice(0, pageIndex * WORDS_PER_PAGE).join(' ').length + 1
-  }, [words, pageIndex])
-  const pageTarget = useMemo(
-    () => words.slice(pageIndex * WORDS_PER_PAGE, pageIndex * WORDS_PER_PAGE + WORDS_PER_PAGE).join(' '),
-    [words, pageIndex],
-  )
-  const wordsTyped = typed === '' ? 0 : Math.min(words.length, typed.split(' ').length)
-  const progressPct = target.length === 0 ? 0 : Math.min(100, (typed.length / target.length) * 100)
-  const elapsedSecs = startedAt ? (now - startedAt) / 1000 : 0
-  const timeLeft = Math.max(0, Math.ceil(duration - elapsedSecs))
-  const live = scoreRun({
-    correctChars: correctCount(target, typed),
-    keystrokes: presses,
-    seconds: Math.max(elapsedSecs, 0.5),
-  })
+  function updateRun(next) {
+    runRef.current = next
+    setRun(next)
+  }
 
-  const reset = useCallback(
-    (
-      nextDuration = duration,
-      nextWordCount = wordCount,
-      nextSeed = Math.floor(Math.random() * 1e9),
-      nextMode = mode,
-    ) => {
-      setDuration(nextDuration)
-      setWordCount(nextWordCount)
-      setMode(nextMode)
-      setSeed(nextSeed)
-      const list = nextMode === 'quote-s' ? QUOTE_S : nextMode === 'quote-m' ? QUOTE_M : null
-      setWords(list ? list[nextSeed % list.length].split(' ') : streamWords(nextSeed, nextWordCount))
-      setTyped('')
-      setPresses(0)
-      setPageIndex(0)
-      setStartedAt(null)
-      setFinished(false)
-      setPbInfo(null)
-      setCon(null)
-      setNow(Date.now())
-      secRef.current = 0
-      samplesRef.current = []
-      missedRef.current = {}
-      requestAnimationFrame(() => inputRef.current?.focus())
-    },
-    [duration, wordCount, mode],
-  )
+  function reset(nextDuration = duration, nextCount = wordCount, nextSeed = Math.floor(Math.random() * 1e9)) {
+    setDuration(nextDuration)
+    setWordCount(nextCount)
+    setSeed(nextSeed)
+    updateRun(idleRun())
+    samplesRef.current = []
+    missedRef.current = {}
+    setGhost(null)
+    setSaveStatus('')
+    setCaret(null)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  function finish(typed = runRef.current.typed, presses = runRef.current.presses, at = Date.now()) {
+    const current = runRef.current
+    if (current.result || current.startedAt === null) return
+    const seconds = Math.max(0.001, Math.min(duration, (at - current.startedAt) / 1000))
+    const correctChars = correctCount(target, typed)
+    const score = scoreRun({ correctChars, keystrokes: presses, seconds })
+    const samples = sampleProgress(samplesRef.current, { seconds, correctChars, keystrokes: presses })
+    const entry = {
+      ...buildRunPayload({ ...score, duration, wordCount, missed: { ...missedRef.current }, seed, samples, elapsed: seconds }),
+      id: crypto.randomUUID(),
+      created_at: new Date(at).toISOString(),
+      raw: Math.round(presses / 5 / (seconds / 60)),
+      consistency: consistencyFromSamples(samples.map((sample) => sample.net)),
+    }
+    const saved = saveRun(entry)
+    updateRun({ ...current, typed, presses, now: current.startedAt + seconds * 1000, result: { ...entry, ...saved } })
+    setFreshRun((n) => n + 1)
+    setSaveStatus(saved.persisted ? 'Saved on this device.' : 'Browser storage is unavailable. This run is kept for this session only.')
+    if (supabase && user) {
+      const localStatus = saved.persisted ? 'Saved on this device.' : 'Kept for this session only.'
+      const { id: _id, created_at: _date, raw: _raw, consistency: _consistency, ...payload } = entry
+      setSaveStatus(`${localStatus} Saving to cloud...`)
+      supabase.from('results').insert({ ...payload, user_id: user.id }).abortSignal(AbortSignal.timeout(10000)).then(({ error }) => {
+        if (runRef.current.result?.id === entry.id) setSaveStatus(error ? `${localStatus} Cloud save failed. Check your connection and database setup.` : `${localStatus} Cloud copy saved.`)
+        if (!error) setFreshRun((n) => n + 1)
+      }, () => {
+        if (runRef.current.result?.id === entry.id) setSaveStatus(`${localStatus} Cloud save failed. Check your connection.`)
+      })
+    }
+  }
 
   useEffect(() => {
-    if (startedAt === null || finished) return
-    const id = setInterval(() => {
-      const s = (Date.now() - startedAt) / 1000
-      setNow(Date.now())
-      const sec = Math.floor(s)
-      if (sec > secRef.current) {
-        secRef.current = sec
-        samplesRef.current.push(s > 0 ? Math.round(correctCount(target, typed) / 5 / (s / 60)) : 0)
+    if (run.startedAt === null || run.result) return
+    const timer = setInterval(() => {
+      const current = runRef.current
+      const at = Date.now()
+      const seconds = Math.min(duration, (at - current.startedAt) / 1000)
+      if (seconds >= duration) { finish(current.typed, current.presses, at); return }
+      if (Math.floor(seconds) > Math.floor(samplesRef.current.at(-1)?.second || 0)) {
+        samplesRef.current = sampleProgress(samplesRef.current, { seconds, correctChars: correctCount(target, current.typed), keystrokes: current.presses })
       }
-      if (s >= duration) setFinished(true)
+      updateRun({ ...current, now: at })
     }, 100)
-    return () => clearInterval(id)
-  }, [startedAt, finished, duration, typed, target])
+    return () => clearInterval(timer)
+  }, [run.startedAt, run.result, duration, target, user?.id])
+
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (!card || !focused || run.result || page !== 'type') return
+    function measure() {
+      const span = card.querySelector('[data-caret]')
+      if (!span) return
+      const c = card.getBoundingClientRect()
+      const r = span.getBoundingClientRect()
+      const next = { x: r.left - c.left - card.clientLeft, y: r.top - c.top - card.clientTop, h: r.height }
+      setCaret((previous) => previous?.x === next.x && previous?.y === next.y && previous?.h === next.h ? previous : next)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    document.fonts.ready.then(measure)
+    return () => observer.disconnect()
+  }, [run.typed, run.pageIndex, run.result, focused, page, target])
+
+  useEffect(() => { if (run.result && page === 'type') resultRef.current?.focus() }, [run.result, page])
 
   useEffect(() => {
-    if (!finished) return
-    const secs = Math.max(elapsedSecs, 0.5)
-    const cc = correctCount(target, typed)
-    const s = scoreRun({ correctChars: cc, keystrokes: presses, seconds: secs })
-    setCon(consistencyFromSamples(samplesRef.current))
-    const key = mode === 'time' ? `time-${words.length}w-${duration}s` : mode
-    let all = {}
-    try {
-      all = JSON.parse(localStorage.getItem(PB_KEY) || '{}')
-    } catch {
-      all = {}
-    }
-    const prev = all[key] || null
-    const best = !prev || s.wpm > prev.wpm
-    if (best) {
-      const next = { ...all, [key]: { wpm: s.wpm, acc: s.acc } }
-      try {
-        localStorage.setItem(PB_KEY, JSON.stringify(next))
-      } catch {
-        /* private mode: run still scores, PB just doesn't persist */
-      }
-    }
-    setPbInfo({ isBest: best, pb: best ? { wpm: s.wpm, acc: s.acc } : prev })
-  }, [finished])
-
-  useEffect(() => {
-    inputRef.current?.focus()
+    const onPop = () => setPage(window.location.pathname === '/stats' ? 'stats' : 'type')
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
   }, [])
 
-  function markStarted() {
-    if (startedAt === null) {
-      const t = Date.now()
-      setStartedAt(t)
-      setNow(t)
+  useEffect(() => {
+    if (!supabase) return
+    let mounted = true
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return
+      setUser(data?.session?.user || null)
+      if (error) setAuthMsg('Could not restore your login. Try logging in again.')
+    }, () => { if (mounted) setAuthMsg('Could not connect to login. Typing still works on this device.') })
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user || null) })
+    return () => { mounted = false; data.subscription.unsubscribe() }
+  }, [])
+
+  useEffect(() => {
+    if (!authLoading || !supabase) return
+    let mounted = true
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const complete = (message) => {
+      if (!mounted) return
+      window.history.replaceState({}, '', '/')
+      setAuthLoading(false)
+      if (message) { setAuthMsg(message); setAuthOpen(true) }
     }
+    if (code) supabase.auth.exchangeCodeForSession(code).then(({ error }) => complete(error ? 'Login link expired. Request a new link.' : ''), () => complete('Login failed. Check your connection and try again.'))
+    else complete(params.has('error') ? 'Login was cancelled or the link expired. Try again.' : '')
+    return () => { mounted = false }
+  }, [authLoading])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (authOpen && dialog && !dialog.open) {
+      authTriggerRef.current = document.activeElement
+      dialog.showModal()
+    } else if (!authOpen && dialog?.open) {
+      dialog.close()
+      authTriggerRef.current?.focus?.()
+    }
+  }, [authOpen])
+
+  useEffect(() => {
+    function onKey(e) {
+      if (page !== 'type' || authOpen || runRef.current.result || e.ctrlKey || e.metaKey || e.altKey) return
+      if (document.activeElement !== document.body || e.key.length !== 1) return
+      e.preventDefault()
+      inputRef.current?.focus()
+      acceptText(runRef.current.typed + e.key)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [page, authOpen, duration, wordCount, target])
+
+  function navigate(next) {
+    setPage(next)
+    setAuthOpen(false)
+    window.history.pushState({}, '', next === 'stats' ? '/stats' : '/')
+    requestAnimationFrame(() => document.querySelector('main h1')?.focus())
   }
 
-  function onChange(e) {
-    if (finished) return
-    const next = e.target.value
-    if (next.length < typed.length) {
-      if (next.length < pageStart) return
-      setTyped(next)
+  function acceptText(next) {
+    const current = runRef.current
+    if (current.result || authOpen) return
+    const at = Date.now()
+    if (current.startedAt !== null && at - current.startedAt >= duration * 1000) { finish(); return }
+    const start = current.pageIndex === 0 ? 0 : words.slice(0, current.pageIndex * WORDS_PER_PAGE).join(' ').length + 1
+    if (next.length < current.typed.length) {
+      if (!current.typed.startsWith(next) || !canDelete({ cursor: next.length, pageStart: start })) return
+      updateRun({ ...current, typed: next, presses: current.presses + 1, now: at })
       return
     }
-    if (next.length > target.length) return
-    markStarted()
-    const added = next.slice(typed.length)
-    for (let j = 0; j < added.length; j++) {
-      const expected = target[typed.length + j]
-      if (expected && expected !== ' ' && added[j] !== expected) {
-        const k = expected.toLowerCase()
-        missedRef.current[k] = (missedRef.current[k] || 0) + 1
+    if (next.length <= current.typed.length || next.length > target.length || !next.startsWith(current.typed)) return
+    const added = next.slice(current.typed.length)
+    for (let i = 0; i < added.length; i++) {
+      const expected = target[current.typed.length + i]
+      if (added[i] !== expected) {
+        const key = expected === ' ' ? 'space' : expected.toLowerCase()
+        missedRef.current[key] = (missedRef.current[key] || 0) + 1
       }
     }
-    setPresses((p) => p + (next.length - typed.length))
-    setTyped(next.length === target.length ? target : next)
-    if (next.length === target.length) {
-      setNow(Date.now())
-      setFinished(true)
-    } else if (next.length > pageStart + pageTarget.length && pageIndex < totalPages - 1) {
-      setPageIndex(pageIndex + 1)
-    }
+    let pageIndex = current.pageIndex
+    while (pageIndex < totalPages - 1 && next.length >= words.slice(0, (pageIndex + 1) * WORDS_PER_PAGE).join(' ').length + 1) pageIndex++
+    const updated = { ...current, typed: next, presses: current.presses + added.length, startedAt: current.startedAt ?? at, now: at, pageIndex }
+    updateRun(updated)
+    if (next.length === target.length) finish(next, updated.presses, at)
   }
 
-  function onKeyDown(e) {
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      reset()
-    }
+  function rematch() {
+    if (!pb || pb.seed == null) return
+    reset(duration, wordCount, pb.seed)
+    setGhost(pb)
   }
 
-  const final = finished
-    ? scoreRun({ correctChars: correctCount(target, typed), keystrokes: presses, seconds: Math.max(elapsedSecs, 0.5) })
-    : null
+  async function login(kind) {
+    if (!supabase || authPending) return
+    setAuthPending(true)
+    setAuthMsg('')
+    try {
+      const { error } = kind === 'google'
+        ? await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: callbackUrl() } })
+        : await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: callbackUrl() } })
+      setAuthMsg(error ? `Login failed: ${error.message}` : kind === 'email' ? 'Check your inbox for the login link.' : 'Opening Google login...')
+    } catch { setAuthMsg('Login could not connect. Check your connection and try again.') }
+    finally { setAuthPending(false) }
+  }
+
+  async function logout() {
+    const { error } = await supabase.auth.signOut().catch(() => ({ error: true }))
+    if (error) { setAuthMsg('Logout failed. Check your connection and try again.'); setAuthOpen(true) }
+    else setUser(null)
+  }
+
+  const result = run.result
+  const cursor = run.typed.length
+  const ghostCursor = ghost ? ghostIndex({ wpm: ghost.wpm, seconds: elapsed }) : -1
+  let charOffset = pageStart
+
+  if (authLoading) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
 
   return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 p-4">
-        <h1 className="brutal-card font-display bg-[var(--accent)] px-3 py-1 text-2xl tracking-tight">KEYSMASH</h1>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="mode">
-          <span className="text-[11px] font-bold tracking-[0.2em]" aria-hidden="true">MODE</span>
-          <button
-            type="button"
-            aria-pressed={mode === 'time'}
-            onClick={() => reset(duration, wordCount, undefined, 'time')}
-            className="brutal-btn px-3 py-2 text-sm font-bold"
-          >
-            TIME
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === 'quote-s'}
-            onClick={() => reset(duration, wordCount, undefined, 'quote-s')}
-            className="brutal-btn px-3 py-2 text-sm font-bold"
-          >
-            SHORT
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === 'quote-m'}
-            onClick={() => reset(duration, wordCount, undefined, 'quote-m')}
-            className="brutal-btn px-3 py-2 text-sm font-bold"
-          >
-            MED
-          </button>
-        </div>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="durations">
-          <span className="text-[11px] font-bold tracking-[0.2em]" aria-hidden="true">SECS</span>
-          {DURATIONS.map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={d === duration}
-              onClick={() => reset(d, wordCount)}
-              className="brutal-btn px-3 py-2 text-sm font-bold"
-            >
-              {d}s
-            </button>
-          ))}
-        </div>
-        {mode === 'time' && (
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="word counts">
-          <span className="text-[11px] font-bold tracking-[0.2em]" aria-hidden="true">WORDS</span>
-          {WORD_COUNTS.map((w) => (
-            <button
-              key={w}
-              type="button"
-              aria-pressed={w === wordCount}
-              onClick={() => reset(duration, w)}
-              className="brutal-btn px-3 py-2 text-sm font-bold"
-            >
-              {w}
-            </button>
-          ))}
-        </div>
-        )}
+    <div className="app-shell">
+      <a href="#main" className="skip-link">Skip to typing</a>
+      <header className="masthead">
+        <button className="wordmark" onClick={() => navigate('type')} aria-label="KEYSMASH home">KEYSMASH<span aria-hidden="true">.</span></button>
+        <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && (user ? <button onClick={logout}>Log out</button> : <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>)}</nav>
       </header>
-
-      <main className="mx-auto w-full max-w-3xl p-4">
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <div className="brutal-card font-display px-3 py-1 text-xl tabular-nums" aria-live="polite">
-            {finished ? 0 : timeLeft}s
+      <main id="main" className="app-main" tabIndex={-1}>
+        {page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : <>
+          <div className="test-heading"><h1 tabIndex={-1}>Less talk. More type.</h1><p>Beat the clock. Then beat yourself.</p></div>
+          <div className="test-settings">
+            <fieldset disabled={active}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount)}>{d}<span>s</span></button>)}</div></fieldset>
+            <fieldset disabled={active}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count)}>{count}</button>)}</div></fieldset>
+            <p className="settings-note">{active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
           </div>
-          <div className="brutal-card px-3 py-1 text-sm tabular-nums" aria-live="polite">
-            {startedAt && !finished ? `${live.wpm} wpm` : 'start typing'}
-          </div>
-          <div className="brutal-card px-3 py-1 text-sm tabular-nums" aria-live="polite">
-            page {pageIndex + 1}/{totalPages} · word {wordsTyped}/{words.length}
-          </div>
-        </div>
-        <div className="brutal-card mb-3 h-3 w-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(progressPct)} aria-valuemin={0} aria-valuemax={100} aria-label="typing progress">
-          <div className="brutal-progress-fill h-full" style={{ width: `${progressPct}%` }} />
-        </div>
-
-        {!finished ? (
-          <div className="brutal-card relative min-h-[11rem] p-5 text-lg leading-9 md:text-xl" onClick={() => inputRef.current?.focus()}>
-            <p aria-label="text to type">
-              {(() => {
-                const cursor = Math.min(typed.length, target.length)
-                const start = target.lastIndexOf(' ', cursor - 1) + 1
-                let end = target.indexOf(' ', cursor)
-                if (end === -1) end = target.length
-                return pageTarget.split('').map((ch, i) => {
-                  const gi = pageStart + i
-                  const t = typed[gi]
-                  const isCurrent = gi === cursor
-                  const inWord = gi >= start && gi < end && ch !== ' '
-                  const cls =
-                    t === undefined ? 'text-neutral-500' : t === ch ? 'text-black' : 'bg-[var(--danger)] text-white'
-                  const hl = t === undefined && inWord ? 'bg-[var(--accent)]' : t !== undefined && t === ch && inWord ? 'bg-[var(--accent)]' : ''
-                  return (
-                    <span key={gi} className={`${cls} ${hl} ${isCurrent ? 'caret-block' : ''}`}>
-                      {ch}
-                    </span>
-                  )
-                })
-              })()}
-            </p>
-            <input
-              ref={inputRef}
-              value={typed}
-              onChange={onChange}
-              onKeyDown={onKeyDown}
-              autoCapitalize="off"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              aria-label="typing input"
-              className="absolute inset-0 h-full w-full cursor-text opacity-0"
-            />
-          </div>
-        ) : (
-          <div className="brutal-card bg-[var(--accent)] p-6 text-center">
-            {pbInfo?.isBest && (
-              <div className="font-display mx-auto mb-3 inline-block bg-black px-3 py-1 text-sm text-white">NEW BEST</div>
-            )}
-            <div className="font-display text-6xl tabular-nums">{final.wpm}</div>
-            <div className="font-display mt-1 text-sm tracking-wide">WORDS PER MINUTE</div>
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm font-bold tabular-nums">
-              <span className="brutal-card bg-white px-3 py-1">{final.acc}% ACC</span>
-              <span className="brutal-card bg-white px-3 py-1">{con ?? 100}% CON</span>
-              {mode === 'time' ? (
-                <>
-                  <span className="brutal-card bg-white px-3 py-1">{duration}s</span>
-                  <span className="brutal-card bg-white px-3 py-1">{wordCount} WORDS</span>
-                </>
-              ) : (
-                <span className="brutal-card bg-white px-3 py-1">{mode === 'quote-s' ? 'SHORT' : 'MED'} QUOTE</span>
-              )}
-              {pbInfo && !pbInfo.isBest && pbInfo.pb && (
-                <span className="brutal-card bg-white px-3 py-1">PB {pbInfo.pb.wpm} WPM</span>
-              )}
+          {!result ? <>
+            <div className="live-strip">
+              <div className="clock"><strong>{Math.max(0, Math.ceil(duration - elapsed))}</strong><span>seconds left</span></div>
+              <dl className="live-metrics"><div><dt>WPM</dt><dd>{active ? live.wpm : '0'}</dd></div><div><dt>Accuracy</dt><dd>{live.acc}<small>%</small></dd></div></dl>
+              <div className="page-position"><span>Page {run.pageIndex + 1} / {totalPages}</span><strong>{completedWords} / {wordCount} words</strong></div>
             </div>
-            {(() => {
-              const entries = Object.entries(missedRef.current)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 12)
-              const top = entries.length ? entries[0][1] : 0
-              return (
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-sm font-bold" aria-label="missed keys">
-                  <span className="text-[11px] tracking-[0.2em]" aria-hidden="true">MISSED</span>
-                  {entries.length === 0 ? (
-                    <span className="brutal-card bg-white px-3 py-1">CLEAN</span>
-                  ) : (
-                    entries.map(([ch, n]) => (
-                      <span
-                        key={ch}
-                        className={`brutal-card px-2 py-1 tabular-nums ${n === top && top > 1 ? 'bg-[var(--danger)] text-white' : n >= 2 ? 'bg-white [box-shadow:4px_4px_0_var(--danger)]' : 'bg-white opacity-70'}`}
-                      >
-                        {ch} ×{n}
-                      </span>
-                    ))
-                  )}
-                </div>
-              )
-            })()}
-            <button type="button" onClick={() => reset()} className="brutal-btn font-display mt-5 bg-white px-5 py-2">
-              RETRY (TAB)
-            </button>
-          </div>
-        )}
-
-        <p className="mt-3 text-xs font-bold"><span className="brutal-kbd">TAB</span> restart · timer starts on first keystroke · backspace roams the page</p>
+            <div className={`typing-card ${focused ? 'is-focused' : ''}`} ref={cardRef}>
+              <div className="typing-text" aria-label="Text to type" style={{ filter: focused ? undefined : 'blur(4px)' }}>
+                {pageWords.map((word, wi) => {
+                  const offset = charOffset
+                  charOffset += word.length + 1
+                  return <span className={`typing-word ${cursor >= offset && cursor <= offset + word.length ? 'current-word' : ''}`} key={offset}>{[...word, ...(wi < pageWords.length - 1 ? [' '] : [])].map((ch, i) => {
+                    const index = offset + i
+                    const typed = run.typed[index]
+                    return <span key={index} data-caret={index === cursor || undefined} className={`${typed === undefined ? 'untyped' : typed === ch ? 'correct' : 'incorrect'} ${index === ghostCursor ? 'ghost-char' : ''}`}>{ch}</span>
+                  })}{wi === pageWords.length - 1 && cursor === offset + word.length && <span data-caret aria-hidden="true">&nbsp;</span>}</span>
+                })}
+              </div>
+              <textarea ref={inputRef} value={run.typed} onChange={(e) => { acceptText(e.target.value); e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} onKeyDown={(e) => {
+                if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); reset() }
+                if (e.key === 'Escape') { e.preventDefault(); inputRef.current.blur(); document.querySelector('nav button')?.focus() }
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) e.preventDefault()
+              }} onPaste={(e) => e.preventDefault()} onDrop={(e) => e.preventDefault()} onFocus={(e) => { setFocused(true); e.target.setSelectionRange(run.typed.length, run.typed.length) }} onBlur={() => setFocused(false)} onSelect={(e) => { if (e.target.selectionStart !== e.target.value.length) e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} autoCapitalize="off" autoComplete="off" autoCorrect="off" spellCheck={false} aria-label="Typing input" aria-describedby="typing-help" className="typing-input" />
+              {!focused && <div className="focus-cover" aria-hidden="true"><span>Click here or press a key to type</span></div>}
+              {focused && caret && <div className="smooth-caret" aria-hidden="true" style={{ transform: `translate(${caret.x}px, ${caret.y}px)`, height: caret.h }} />}
+              <div className="test-progress" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Typing progress"><div style={{ width: `${progress}%` }} /></div>
+            </div>
+            <div className="test-bottom"><p id="typing-help"><kbd>Tab</kbd> restart <span>/</span> <kbd>Esc</kbd> leave test<br /><span className="muted">Timer starts on your first key. Backspace stays on this page.</span></p><button className="brutal-btn" onClick={() => reset()}>Restart test</button></div>
+            <div className="ghost-row">{ghost ? <p>Racing your {ghost.wpm} WPM best. <strong>{live.wpm - ghost.wpm >= 0 ? '+' : ''}{live.wpm - ghost.wpm} WPM</strong></p> : duration === 60 && pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">{duration === 60 ? 'Complete this mode to set a best and unlock your ghost.' : 'Pick 60 seconds to race your personal best.'}</p>}</div>
+          </> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
+            <div className="result-heading"><h2>That's your run.</h2>{result.isBest && <span className="best-stamp">New personal best</span>}</div>
+            <div className="result-hero"><div><span className="metric-label">Words per minute</span><strong>{result.wpm}</strong></div><div><span className="metric-label">Accuracy</span><strong>{result.acc}<small>%</small></strong></div></div>
+            <PaceChart samples={result.samples} comparison={result.previous?.samples || []} />
+            {!result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}
+            <dl className="result-details"><div><dt>Raw WPM</dt><dd>{result.raw}</dd></div><div><dt>Net WPM</dt><dd>{result.wpm}</dd></div><div><dt>Consistency</dt><dd>{result.consistency}%</dd></div><div><dt>Elapsed</dt><dd>{Number(result.elapsed_s.toFixed(2))}s</dd></div></dl>
+            <div className="missed-keys"><h3>Missed keys</h3>{rankMissed(result.missed_keys).length ? <ul>{rankMissed(result.missed_keys).map(([key, count]) => <li key={key}><kbd>{key}</kbd><span>{count} {count === 1 ? 'miss' : 'misses'}</span></li>)}</ul> : <p>No missed keys in this run.</p>}</div>
+            <div className="result-actions"><button className="brutal-btn primary" onClick={() => reset()}>Type again <kbd>Tab</kbd></button>{duration === 60 && pb && <button className="brutal-btn" onClick={rematch}>Race your best</button>}<button className="text-button" onClick={() => navigate('stats')}>View history</button></div>
+            <div className="result-meta"><span>{formatMode(result.mode)}</span>{ghost && <span>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM vs ghost</span>}<p role="status">{saveStatus}</p></div>
+          </section>}
+        </>}
       </main>
+      <footer className="app-footer"><span>KEYSMASH / A typing test.</span><span>{user ? `Signed in as ${user.email}` : 'No account needed. Just a keyboard.'}</span></footer>
+      {supabase && <dialog ref={dialogRef} className="auth-dialog" aria-labelledby="auth-heading" onCancel={() => setAuthOpen(false)} onClick={(e) => { if (e.target === dialogRef.current) { const r = e.target.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) setAuthOpen(false) } }}>
+        <div className="section-heading"><h2 id="auth-heading">Save your pace.</h2><button className="text-button" onClick={() => setAuthOpen(false)}>Close</button></div>
+        <p>Log in for cloud history. Your tests always work without an account.</p>
+        <button className="brutal-btn" disabled={authPending} onClick={() => login('google')}>Continue with Google</button>
+        <form onSubmit={(e) => { e.preventDefault(); login('email') }}><label htmlFor="login-email">Email address</label><input id="login-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" /><button className="brutal-btn primary" disabled={authPending}>{authPending ? 'Connecting...' : 'Send login link'}</button></form>
+        {authMsg && <p role="status">{authMsg}</p>}
+      </dialog>}
     </div>
   )
 }

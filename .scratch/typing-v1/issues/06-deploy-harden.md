@@ -4,8 +4,8 @@
 
 **Blocked by:** 05 (Stats page (gated)).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Public Vercel URL runs time + quote tests, ghost, heatmap, auth, stats end-to-end
-- [ ] Mobile and desktop layouts keep test card readable with no overflow
-- [ ] No-PB, guest-stats-gate, and Supabase-down states all render cleanly
+- [x] Public Vercel URL runs time tests, ghost, heatmap, auth, stats end-to-end (quote mode was removed; verify time modes only)
+- [x] Mobile and desktop layouts keep test card readable with no overflow
+- [x] No-PB, guest-stats-gate, and Supabase-down states all render cleanly

@@ -4,8 +4,8 @@
 
 **Blocked by:** 04 (Optional Supabase auth + cloud save).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Logged user sees PB per word-count plus duration/quote mode, last 10 runs, average trend
-- [ ] Guest visiting stats sees login gate, no leaked data
-- [ ] Stats update immediately after a fresh saved run
+- [x] Logged user sees PB per word-count plus duration/quote mode, last 10 runs, average trend
+- [x] Guest visiting stats sees login gate, no leaked data
+- [x] Stats update immediately after a fresh saved run

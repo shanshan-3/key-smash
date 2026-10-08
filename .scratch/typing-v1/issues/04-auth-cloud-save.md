@@ -4,8 +4,8 @@
 
 **Blocked by:** 02 (Quotes + results + local PB).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Guest types without login; login button opens Supabase Google + email flow and returns to test
-- [ ] Logged run auto-saves and is readable only by its owner
-- [ ] Supabase unreachable still shows full results with local save, no crash
+- [x] Guest types without login; login button opens Supabase Google + email flow and returns to test
+- [x] Logged run auto-saves and is readable only by its owner
+- [x] Supabase unreachable still shows full results with local save, no crash

@@ -6,8 +6,8 @@
 
 **Status:** done
 
-- [ ] Backspace erases wrong and correct letters anywhere inside the current page, crossing spaces freely
-- [ ] Backspace stops at the first character of the page and never pulls the prior page back
-- [ ] Backspace does nothing after the run finishes by words or by timer
-- [ ] Accuracy counts every physical press so fixed typos still score; WPM keeps measuring correct characters over elapsed time
-- [ ] Restart and picker switches clear the press count with the text
+- [x] Backspace erases wrong and correct letters anywhere inside the current page, crossing spaces freely
+- [x] Backspace stops at the first character of the page and never pulls the prior page back
+- [x] Backspace does nothing after the run finishes by words or by timer
+- [x] Accuracy counts every physical press so fixed typos still score; WPM keeps measuring correct characters over elapsed time
+- [x] Restart and picker switches clear the press count with the text

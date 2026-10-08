@@ -6,8 +6,8 @@
 
 **Status:** done
 
-- [ ] Word picker shows 25 / 50 / 60 / 100 with 60 pre-selected beside durations
-- [ ] Every run starts a finite N-word test with no refill for the selected N
-- [ ] Switching word count or duration restarts with a fresh test
-- [ ] Finishing the last word ends immediately with WPM on actual elapsed seconds
-- [ ] Timer expiry ends with partial WPM/Acc on typed-so-far
+- [x] Word picker shows 25 / 50 / 60 / 100 with 60 pre-selected beside durations
+- [x] Every run starts a finite N-word test with no refill for the selected N
+- [x] Switching word count or duration restarts with a fresh test
+- [x] Finishing the last word ends immediately with WPM on actual elapsed seconds
+- [x] Timer expiry ends with partial WPM/Acc on typed-so-far

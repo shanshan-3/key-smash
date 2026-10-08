@@ -4,8 +4,8 @@
 
 **Blocked by:** 02 (Quotes + results + local PB).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 60s rerun on PB seed shows ghost marker tracking PB pace with live delta
-- [ ] Beating the ghost updates PB and shows positive delta on results
-- [ ] No PB yet shows no ghost and a "run to set PB" empty state
+- [x] 60s rerun on PB seed shows ghost marker tracking PB pace with live delta
+- [x] Beating the ghost updates PB and shows positive delta on results
+- [x] No PB yet shows no ghost and a "run to set PB" empty state
