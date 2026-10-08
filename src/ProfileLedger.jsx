@@ -33,7 +33,7 @@ export default function ProfileLedger({ profile }) {
     <p className="profile-data-note">All-time cloud results across every mode. Typing time includes measured runs only; local-only runs stay on their device.</p>
     {Number(profile.run_count) === 0 ? <section className="state-panel"><h2>No cloud runs yet.</h2><p>Records and averages appear after the first cloud-saved run.</p></section>
       : <section className="profile-records" aria-labelledby="profile-records-title">
-        <div className="section-heading"><h2 id="profile-records-title">Personal records.</h2><p>Your most-practiced modes. Each score is a best.</p></div>
+        <div className="section-heading"><h2 id="profile-records-title">Personal records.</h2><p>Most-practiced modes. Each score is a best.</p></div>
         <ol className="record-sheet">{featured.map((record, index) => <li key={record.mode}>
           <span className="record-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
           <div className="record-mode"><h3>{formatMode(record.mode)}</h3><span>{record.run_count} {Number(record.run_count) === 1 ? 'run' : 'runs'}</span></div>

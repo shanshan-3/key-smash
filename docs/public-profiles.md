@@ -78,3 +78,43 @@ actionable heuristic findings. Standards findings: 0; no worst issue.
 Independent review against ticket 01: no missing behavior, incorrect implementation,
 or scope creep found by inspection. Spec findings: 0; no worst issue. Personal
 bests and renaming remain in tickets 02 and 03.
+
+## Ticket 02 verification
+
+Lint and production build pass. No automated test files, scripts, or project
+dependencies were added. Migration 0005 has not been applied to live Supabase;
+apply it before deploying the ledger frontend.
+
+Manually exercised migrations 0001–0005 in a temporary PGlite PostgreSQL runtime.
+A 209-run profile across five modes returned all 209 runs, 52 average WPM,
+99.8% average accuracy, and 61 measured seconds from two 30.25-second entries;
+older null durations did not contribute. Each best retained its winning-run
+accuracy, including equal-WPM records where 98% beat 97%. The ordering includes
+ascending internal result ID for remaining ties without returning that ID.
+Zero runs returned null averages/time and an empty list. Anonymous null-handle
+requests and unknown/unpublished handles returned no rows. Authenticated null-
+handle requests returned only the caller's own private or handleless profile.
+Anonymous raw reads failed with 42501. The legacy RPC still returned its
+original four-field aggregate. The new function's fixed empty search path and
+security-definer property were confirmed.
+
+Manually inspected Chrome with in-memory API fixtures. Five modes produced four
+featured rows ordered by practice count and best WPM; the inline table sorted
+word counts and durations numerically. Enter expanded the native disclosure and
+focus had a solid outline. Fewer modes rendered only available rows, null time
+showed a dash, and zero runs showed no measured averages or invented records.
+Loading, request error, successful retry, not-found, and navigation back from
+typing were checked. Desktop and 320px screenshots were inspected; mobile
+document width remained 320px. These browser checks do not replace a live
+deployment smoke check after the migration.
+
+### Standards
+
+Independent review of `bc3a7c2...cfc9d10`: no documented-standard violations or
+actionable heuristic findings. Standards findings: 0; no worst issue.
+
+### Spec
+
+Independent review against ticket 02: no code behavior mismatch or scope creep.
+One operational requirement remains: apply migration 0005 before enabling the
+frontend. Spec code findings: 0; pending deployment requirement: 1.
