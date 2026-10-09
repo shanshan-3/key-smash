@@ -1,6 +1,6 @@
 # Public profile deployment
 
-Apply migrations 0001–0008 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0009 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
@@ -44,8 +44,8 @@ Passing a normalized handle to the dashboard RPC returns only a published
 profile. A null handle returns only the authenticated caller's own profile,
 including unpublished profiles; anonymous callers receive no row. The owner
 dashboard uses this private lookup. Both owner and public dashboards show
-weekly mode improvement and a 52-week activity ledger. Race actions remain
-separate tickets.
+weekly mode improvement and a 52-week activity ledger. Owners can race their
+cloud records while private. Public ghost challenges remain in ticket 07.
 
 Migration 0006 reserves `profile` for future handle claims through an insert/update
 trigger. Existing accounts using that handle keep their URL and publication
@@ -69,6 +69,23 @@ cloud-run counts across every mode, including zero-run buckets. Only `week_start
 and `run_count` are returned for each entry. Existing totals, records, trends, and
 the legacy public lookup remain available. The frontend uses the returned window
 as a snapshot until navigation or reload, so the browser clock cannot shift it.
+
+Migration 0009 adds `word_set_version` with default 1 to saved results, backfills
+existing results, and creates `get_owner_ghost(requested_mode)`. Apply it before
+deploying owner races or the versioned result writer. The RPC has an empty search
+path and explicit authenticated execution grant; anonymous execution is denied.
+It selects only `auth.uid()`'s winning result, whether or not the profile has a
+handle or is published. Winner ordering matches personal records: WPM descending,
+accuracy descending, internal ID ascending. Only handle, mode, WPM, accuracy,
+word count, duration, elapsed time, seed, word-set version, and a derived trace
+of `second` plus `position` are returned. Raw samples, keystrokes, missed keys,
+IDs, account information, and individual timestamps remain private.
+
+Deploy `/profile/race/:mode` and `/profile/race` hosting fallbacks with the
+frontend. The latter shows a generic unavailable state for a missing mode.
+Version-1 generation preserves the original word list and random generator;
+future word-set changes must retain this implementation. Unsupported versions
+are unavailable rather than silently producing a different word stream.
 
 ## Verification — 2026-10-08
 
@@ -252,3 +269,48 @@ inspected; mobile document width remained 320px.
 
 Migration 0008 has not been applied to live Supabase. Apply it before frontend
 deployment and complete the live authentication/hosting smoke checks afterward.
+
+## Ticket 06 verification — 2026-10-09
+
+All local combined modes now expose Race your best. Owner record rows and the
+expanded records table open authenticated cloud challenges at
+`/profile/race/:mode`, including for unpublished accounts. Explicit cloud
+selection takes precedence over local PBs. Settings and seeded versioned text
+stay locked; restart/rematch preserves the selected ghost, while ordinary typing
+navigation clears it even when a local race already uses `/`.
+
+Recorded correct-progress points are interpolated and clamped to the target.
+Unsampled old records use constant final-average WPM pacing. The ghost is marked
+within the current text page; an edge indicator preserves its presence when its
+position is outside that page. Target WPM, exact position, and character lead/
+deficit remain readable. Results compare the challenged ghost first, using WPM
+then accuracy for win/tie/loss, with independent local personal-best feedback.
+The dashed ghost pace also has accessible tabular measurements. Completed runs
+use normal local/PB persistence and the signed-in challenger's cloud account.
+Local PBs now accept higher accuracy when WPM ties.
+
+Lint and production build pass. No typecheck or automated test suite is configured;
+no automated test tooling or dependencies were added. Standards and Spec reviews
+are clear after fixing same-route local exits, ordinary-run preservation on login,
+off-page ghost markers, and missing-mode race routes.
+
+Temporary PGlite checks applied migrations 0001–0009: existing records backfilled
+to version 1; cloud winner ordering selected matching accuracy and the smallest
+internal ID; derived trace points excluded malformed/out-of-range samples and
+raw metrics; private handleless owners could race; older records returned an
+empty trace for fallback; missing and cross-account modes returned no data;
+anonymous ghost execution and raw-table reads remained denied.
+
+Temporary headless Chrome fixtures exercised all 16 cloud and all 16 local
+combined modes, owner actions while unpublished, cross-device cloud lookup,
+explicit-cloud priority, locked settings, seeded target text, refresh/back,
+restart/rematch after a new PB, interpolation/fallback and clamping, win/tie/loss
+rules, independent PB badges, local/cloud result payloads, unsupported versions,
+retryable errors, missing-mode routing, page-edge markers in both directions,
+keyboard restart, reduced motion, guest local-only saving, and login without
+discarding an ordinary active run. A 320px screenshot was inspected and mobile
+document width remained 320px. Version-1 text was compared with the pre-change
+generator across all word counts and multiple seeds and remained identical.
+
+Migration 0009 has not been applied to live Supabase. Apply it before frontend
+deployment and smoke-check real authentication, race deep links, and cloud saves.

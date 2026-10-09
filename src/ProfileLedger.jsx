@@ -20,7 +20,7 @@ function compareModes(a, b) {
   return a.mode.localeCompare(b.mode, 'en')
 }
 
-export default function ProfileLedger({ profile, children }) {
+export default function ProfileLedger({ profile, children, onRace }) {
   const records = profile?.personal_bests || []
   const practicedModes = [...records].sort((a, b) => b.run_count - a.run_count || b.wpm - a.wpm || a.mode.localeCompare(b.mode, 'en'))
   const featured = practicedModes.slice(0, 4)
@@ -43,12 +43,13 @@ export default function ProfileLedger({ profile, children }) {
           <div className="record-mode"><h3>{formatMode(record.mode)}</h3><span>{record.run_count} {Number(record.run_count) === 1 ? 'run' : 'runs'}</span></div>
           <strong className="record-wpm">{record.wpm}<small> WPM</small></strong>
           <span className="record-accuracy">{record.accuracy}% accuracy</span>
+          {onRace && <button className="brutal-btn record-race" aria-label={`Race this ghost: ${formatMode(record.mode)}`} onClick={() => onRace(record.mode)}>Race this ghost</button>}
         </li>)}</ol>
         <details className="all-records">
           <summary>View all modes ({records.length})</summary>
           <div className="table-scroll" role="region" aria-label="All personal records" tabIndex={0}>
-            <table><caption>Personal bests by word count and time limit</caption><thead><tr><th scope="col">Mode</th><th scope="col">Best WPM</th><th scope="col">Accuracy</th><th scope="col">Runs</th></tr></thead>
-              <tbody>{allModes.map((record) => <tr key={record.mode}><th scope="row">{formatMode(record.mode)}</th><td>{record.wpm}</td><td>{record.accuracy}%</td><td>{record.run_count}</td></tr>)}</tbody>
+            <table><caption>Personal bests by word count and time limit</caption><thead><tr><th scope="col">Mode</th><th scope="col">Best WPM</th><th scope="col">Accuracy</th><th scope="col">Runs</th>{onRace && <th scope="col">Race</th>}</tr></thead>
+              <tbody>{allModes.map((record) => <tr key={record.mode}><th scope="row">{formatMode(record.mode)}</th><td>{record.wpm}</td><td>{record.accuracy}%</td><td>{record.run_count}</td>{onRace && <td><button className="text-button" aria-label={`Race this ghost: ${formatMode(record.mode)}`} onClick={() => onRace(record.mode)}>Race this ghost</button></td>}</tr>)}</tbody>
             </table>
           </div>
         </details>

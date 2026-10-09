@@ -38,7 +38,7 @@ export function saveRun(run) {
   const runs = [run, ...loadHistory().filter((entry) => entry.id !== run.id)].slice(0, 50)
   const pbs = loadPbs()
   const previous = pbs[run.mode] || null
-  const isBest = !previous || run.wpm > previous.wpm
+  const isBest = !previous || run.wpm > previous.wpm || (run.wpm === previous.wpm && run.acc > previous.acc)
   const nextPbs = isBest ? { ...pbs, [run.mode]: run } : pbs
   memoryRuns = runs
   memoryPbs = nextPbs

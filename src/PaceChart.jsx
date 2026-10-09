@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export default function PaceChart({ samples = [], comparison = [], label = 'WPM over time', kind = 'pace' }) {
+export default function PaceChart({ samples = [], comparison = [], label = 'WPM over time', kind = 'pace', comparisonLabel = 'Previous best' }) {
   const history = kind === 'history'
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
@@ -79,9 +79,9 @@ export default function PaceChart({ samples = [], comparison = [], label = 'WPM 
   if (!points.length) return <p className="empty-copy">{history ? 'Complete a test to start your progress chart.' : 'This run has no pace samples. Complete another test to record a curve.'}</p>
   return (
     <figure className="pace-chart">
-      <figcaption className="chart-heading"><h3>{label}</h3><div className="chart-legend"><span><i /> {history ? 'Daily average' : 'This run'}</span>{pbPoints.length > 0 && <span><i className="dashed" /> Previous best</span>}</div></figcaption>
+      <figcaption className="chart-heading"><h3>{label}</h3><div className="chart-legend"><span><i /> {history ? 'Daily average' : 'This run'}</span>{pbPoints.length > 0 && <span><i className="dashed" /> {comparisonLabel}</span>}</div></figcaption>
       <div ref={containerRef}><canvas ref={canvasRef} role="img" aria-label={`${label}. ${points.length} recorded ${history ? 'days' : 'intervals'}. Measurements are available below.`} /></div>
-      <details className="sample-details"><summary>{history ? 'View daily averages' : 'View pace measurements'}</summary><div className="table-scroll" tabIndex={0} role="region" aria-label={history ? 'Daily averages' : 'Pace measurements'}><table><thead><tr><th scope="col">{history ? 'Date' : 'Seconds'}</th><th scope="col">{history ? 'Average WPM' : 'Net WPM'}</th>{!history && <th scope="col">Raw WPM</th>}</tr></thead><tbody>{points.map((p) => <tr key={p.second}><td>{history ? p.label : Number(p.second.toFixed(2))}</td><td>{p.net}</td>{!history && <td>{p.raw}</td>}</tr>)}</tbody></table></div></details>
+      <details className="sample-details"><summary>{history ? 'View daily averages' : 'View pace measurements'}</summary><div className="table-scroll" tabIndex={0} role="region" aria-label={history ? 'Daily averages' : 'Pace measurements'}><table><thead><tr><th scope="col">{history ? 'Date' : 'Seconds'}</th><th scope="col">{history ? 'Average WPM' : 'Net WPM'}</th>{!history && <th scope="col">Raw WPM</th>}</tr></thead><tbody>{points.map((p) => <tr key={p.second}><td>{history ? p.label : Number(p.second.toFixed(2))}</td><td>{p.net}</td>{!history && <td>{p.raw}</td>}</tr>)}</tbody></table>{pbPoints.length > 0 && <table><caption>{comparisonLabel}</caption><thead><tr><th scope="col">Seconds</th><th scope="col">Net WPM</th></tr></thead><tbody>{pbPoints.map((point) => <tr key={point.second}><td>{Number(point.second.toFixed(2))}</td><td>{point.net}</td></tr>)}</tbody></table>}</div></details>
     </figure>
   )
 }

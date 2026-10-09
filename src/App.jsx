@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, ghostIndex, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
+import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
+import { ghostOutcome, ghostPace, ghostPosition, prepareGhost } from './ghosts.js'
 import { formatMode, loadPbs, saveRun } from './history.js'
 import Stats from './Stats.jsx'
 import PublicProfile from './PublicProfile.jsx'
 import OwnerProfile from './OwnerProfile.jsx'
 import AccountMenu from './AccountMenu.jsx'
-import { loadOwnerProfile } from './profiles.js'
+import { loadOwnerGhost, loadOwnerProfile } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, supabase } from './supabase.js'
 
@@ -13,19 +14,24 @@ const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
 const WORDS_PER_PAGE = 20
 const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, now: Date.now(), result: null })
-const currentPage = () => window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
+const currentPage = () => window.location.pathname === '/profile/race' || window.location.pathname.startsWith('/profile/race/') ? 'race' : window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
 
 export default function App() {
   const [duration, setDuration] = useState(60)
   const [wordCount, setWordCount] = useState(60)
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
-  const words = useMemo(() => streamWords(seed, wordCount), [seed, wordCount])
+  const [wordSetVersion, setWordSetVersion] = useState(1)
+  const words = useMemo(() => streamWords(seed, wordCount, wordSetVersion), [seed, wordCount, wordSetVersion])
   const target = words.join(' ')
   const [run, setRun] = useState(idleRun)
   const runRef = useRef(run)
   const samplesRef = useRef([])
   const missedRef = useRef({})
   const [ghost, setGhost] = useState(null)
+  const [raceState, setRaceState] = useState({})
+  const [raceRetry, setRaceRetry] = useState(0)
+  const cloudRaceActive = useRef(false)
+  const [localGhostUnavailable, setLocalGhostUnavailable] = useState(false)
   const [focused, setFocused] = useState(false)
   const [caret, setCaret] = useState(null)
   const [user, setUser] = useState(null)
@@ -39,6 +45,7 @@ export default function App() {
   const ownerProfileVersion = useRef(0)
   const [route, setRoute] = useState(() => window.location.pathname + window.location.hash)
   const [page, setPage] = useState(currentPage)
+  const typingPage = page === 'type' || page === 'race'
   const [publicHandle, setPublicHandle] = useState(() => window.location.pathname.slice(3))
   const [freshRun, setFreshRun] = useState(0)
   const [saveStatus, setSaveStatus] = useState('')
@@ -62,14 +69,16 @@ export default function App() {
     setRun(next)
   }
 
-  function reset(nextDuration = duration, nextCount = wordCount, nextSeed = Math.floor(Math.random() * 1e9)) {
+  function reset(nextDuration = duration, nextCount = wordCount, nextSeed = ghost?.seed ?? Math.floor(Math.random() * 1e9), nextGhost = ghost) {
     setDuration(nextDuration)
     setWordCount(nextCount)
     setSeed(nextSeed)
     updateRun(idleRun())
     samplesRef.current = []
     missedRef.current = {}
-    setGhost(null)
+    setGhost(nextGhost)
+    setWordSetVersion(nextGhost?.word_set_version ?? 1)
+    setLocalGhostUnavailable(false)
     setSaveStatus('')
     setCaret(null)
     requestAnimationFrame(() => inputRef.current?.focus())
@@ -83,7 +92,7 @@ export default function App() {
     const score = scoreRun({ correctChars, keystrokes: presses, seconds })
     const samples = sampleProgress(samplesRef.current, { seconds, correctChars, keystrokes: presses })
     const entry = {
-      ...buildRunPayload({ ...score, duration, wordCount, missed: { ...missedRef.current }, seed, samples, elapsed: seconds }),
+      ...buildRunPayload({ ...score, duration, wordCount, missed: { ...missedRef.current }, seed, samples, elapsed: seconds, wordSetVersion }),
       id: crypto.randomUUID(),
       created_at: new Date(at).toISOString(),
       raw: Math.round(presses / 5 / (seconds / 60)),
@@ -107,7 +116,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (run.startedAt === null || run.result) return
+    if (!typingPage || run.startedAt === null || run.result) return
     const timer = setInterval(() => {
       const current = runRef.current
       const at = Date.now()
@@ -119,11 +128,11 @@ export default function App() {
       updateRun({ ...current, now: at })
     }, 100)
     return () => clearInterval(timer)
-  }, [run.startedAt, run.result, duration, target, user?.id])
+  }, [run.startedAt, run.result, duration, target, user?.id, typingPage])
 
   useLayoutEffect(() => {
     const card = cardRef.current
-    if (!card || !focused || run.result || page !== 'type') return
+    if (!card || !focused || run.result || !typingPage) return
     function measure() {
       const span = card.querySelector('[data-caret]')
       if (!span) return
@@ -139,7 +148,7 @@ export default function App() {
     return () => observer.disconnect()
   }, [run.typed, run.pageIndex, run.result, focused, page, target])
 
-  useEffect(() => { if (run.result && page === 'type') resultRef.current?.focus() }, [run.result, page])
+  useEffect(() => { if (run.result && typingPage) resultRef.current?.focus() }, [run.result, page])
 
   useEffect(() => {
     const onPop = () => {
@@ -184,7 +193,7 @@ export default function App() {
 
   useEffect(() => {
     if (authRestoring || authLoading) return
-    const redirect = page === 'stats' && user ? `/profile${window.location.hash}` : page === 'owner' && !user ? '/stats' : null
+    const redirect = page === 'stats' && user ? `/profile${window.location.hash}` : (page === 'owner' || page === 'race') && !user ? '/stats' : null
     if (redirect) {
       window.history.replaceState({}, '', redirect)
       setRoute(redirect)
@@ -198,6 +207,34 @@ export default function App() {
     })
     return () => cancelAnimationFrame(frame)
   }, [route, page, user?.id, authRestoring, authLoading])
+
+  useEffect(() => {
+    if (page !== 'race') {
+      if (cloudRaceActive.current) {
+        reset(duration, wordCount, Math.floor(Math.random() * 1e9), null)
+        setRaceState({})
+        cloudRaceActive.current = false
+      }
+      return
+    }
+    cloudRaceActive.current = true
+    if (authRestoring || authLoading || !user) return
+    let active = true
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    const mode = window.location.pathname.slice('/profile/race/'.length)
+    setRaceState({ route, userId: user.id, loading: true })
+    setGhost(null)
+    updateRun(idleRun())
+    loadOwnerGhost(mode, controller.signal).then((data) => {
+      if (!active) return
+      const selected = prepareGhost(data)
+      if (!selected || selected.mode !== mode) { setRaceState({ route, userId: user.id, unavailable: true }); return }
+      reset(selected.duration_s, selected.word_count, selected.seed, selected)
+      setRaceState({ route, userId: user.id, ready: true })
+    }, () => { if (active) setRaceState({ route, userId: user.id, error: true }) }).finally(() => clearTimeout(timeout))
+    return () => { active = false; clearTimeout(timeout); controller.abort() }
+  }, [page, route, user?.id, authRestoring, authLoading, raceRetry])
 
   useEffect(() => {
     if (!authLoading || !supabase) return
@@ -230,7 +267,7 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e) {
-      if (page !== 'type' || authOpen || runRef.current.result || e.ctrlKey || e.metaKey || e.altKey) return
+      if (!typingPage || (page === 'race' && (!raceState.ready || raceState.route !== route || raceState.userId !== user?.id)) || authOpen || runRef.current.result || e.ctrlKey || e.metaKey || e.altKey) return
       if (document.activeElement !== document.body || e.key.length !== 1) return
       e.preventDefault()
       inputRef.current?.focus()
@@ -238,10 +275,11 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [page, authOpen, duration, wordCount, target])
+  }, [page, raceState.ready, authOpen, duration, wordCount, target])
 
   function navigate(next) {
     const path = next.startsWith('/') ? next : next === 'stats' ? (user ? '/profile#history' : '/stats') : '/'
+    if (path === '/') reset(duration, wordCount, Math.floor(Math.random() * 1e9), null)
     window.history.pushState({}, '', path)
     setPage(currentPage())
     setRoute(path)
@@ -282,9 +320,10 @@ export default function App() {
   }
 
   function rematch() {
-    if (!pb || pb.seed == null) return
-    reset(duration, wordCount, pb.seed)
-    setGhost(pb)
+    if (ghost) { reset(); return }
+    const selected = prepareGhost(pb && { ...pb, mode: pb.mode || pbKey(wordCount, duration), duration_s: pb.duration_s ?? duration, word_count: pb.word_count ?? wordCount })
+    if (!selected) { setLocalGhostUnavailable(true); return }
+    reset(selected.duration_s, selected.word_count, selected.seed, selected)
   }
 
   async function login(kind) {
@@ -308,10 +347,13 @@ export default function App() {
 
   const result = run.result
   const cursor = run.typed.length
-  const ghostCursor = ghost ? ghostIndex({ wpm: ghost.wpm, seconds: elapsed }) : -1
+  const ghostCursor = ghost ? Math.floor(ghostPosition(ghost, elapsed)) : -1
+  const characterDelta = ghost ? correctCount(target, run.typed) - ghostCursor : 0
+  const pageEnd = pageStart + pageWords.join(' ').length
+  const raceReady = page !== 'race' || (raceState.ready && raceState.route === route && raceState.userId === user?.id)
   let charOffset = pageStart
 
-  if (authLoading || ((page === 'owner' || page === 'stats') && (authRestoring || (page === 'owner' && !user) || (page === 'stats' && user)))) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
+  if (authLoading || ((page === 'owner' || page === 'race' || page === 'stats') && (authRestoring || ((page === 'owner' || page === 'race') && !user) || (page === 'stats' && user)))) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
 
   return (
     <div className="app-shell">
@@ -321,12 +363,12 @@ export default function App() {
         <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button>{user ? <AccountMenu current={page === 'owner'} route={route} profile={ownerProfile?.userId === user.id ? ownerProfile : null} onNavigate={navigate} onLogout={logout} /> : <><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>}</>}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
-        {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : <>
-          <div className="test-heading"><h1 tabIndex={-1}>Less talk. More type.</h1><p>Beat the clock. Then beat yourself.</p></div>
+        {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} onRace={(mode) => navigate(`/profile/race/${mode}`)} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : !raceReady ? <><div className="page-heading"><h1 tabIndex={-1}>Your ghost race.</h1><button className="brutal-btn" onClick={() => navigate('/profile')}>Back to profile</button></div>{raceState.route !== route || raceState.loading ? <p className="state-panel" role="status">Loading ghost...</p> : raceState.error ? <section className="state-panel" role="alert"><h2>Ghost could not load.</h2><p>Check your connection and try again.</p><button className="brutal-btn" onClick={() => setRaceRetry((n) => n + 1)}>Retry ghost</button></section> : <section className="state-panel"><h2>Ghost unavailable.</h2><p>This record cannot be raced.</p></section>}</> : <>
+          <div className="test-heading"><h1 tabIndex={-1}>{ghost ? 'Race your best.' : 'Less talk. More type.'}</h1><p>{ghost ? `${formatMode(ghost.mode)} / Target: ${ghost.wpm} WPM, ${ghost.accuracy}% accuracy` : 'Beat the clock. Then beat yourself.'}</p></div>
           <div className="test-settings">
-            <fieldset disabled={active}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount)}>{d}<span>s</span></button>)}</div></fieldset>
-            <fieldset disabled={active}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count)}>{count}</button>)}</div></fieldset>
-            <p className="settings-note">{active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
+            <fieldset disabled={active || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
+            <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>
+            <p className="settings-note">{ghost ? 'Race text and settings are locked.' : active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
           </div>
           {!result ? <>
             <div className="live-strip">
@@ -336,6 +378,7 @@ export default function App() {
             </div>
             <div className={`typing-card ${focused ? 'is-focused' : ''}`} ref={cardRef}>
               <div className="typing-text" aria-label="Text to type" style={{ filter: focused ? undefined : 'blur(4px)' }}>
+                {ghost && ghostCursor < pageStart && <p className="ghost-edge">Ghost is {pageStart - ghostCursor} characters before this page.</p>}
                 {pageWords.map((word, wi) => {
                   const offset = charOffset
                   charOffset += word.length + 1
@@ -343,8 +386,9 @@ export default function App() {
                     const index = offset + i
                     const typed = run.typed[index]
                     return <span key={index} data-caret={index === cursor || undefined} className={`${typed === undefined ? 'untyped' : typed === ch ? 'correct' : 'incorrect'} ${index === ghostCursor ? 'ghost-char' : ''}`}>{ch}</span>
-                  })}{wi === pageWords.length - 1 && cursor === offset + word.length && <span data-caret aria-hidden="true">&nbsp;</span>}</span>
+                  })}{wi === pageWords.length - 1 && (cursor === offset + word.length || ghostCursor === offset + word.length) && <span data-caret={cursor === offset + word.length || undefined} className={ghostCursor === offset + word.length ? 'ghost-char' : ''} aria-hidden="true">&nbsp;</span>}</span>
                 })}
+                {ghost && ghostCursor > pageEnd && <p className="ghost-edge">Ghost is {ghostCursor - pageEnd} characters beyond this page.</p>}
               </div>
               <textarea ref={inputRef} value={run.typed} onChange={(e) => { acceptText(e.target.value); e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} onKeyDown={(e) => {
                 if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); reset() }
@@ -356,15 +400,17 @@ export default function App() {
               <div className="test-progress" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Typing progress"><div style={{ width: `${progress}%` }} /></div>
             </div>
             <div className="test-bottom"><p id="typing-help"><kbd>Tab</kbd> restart <span>/</span> <kbd>Esc</kbd> leave test<br /><span className="muted">Timer starts on your first key. Backspace stays on this page.</span></p><button className="brutal-btn" onClick={() => reset()}>Restart test</button></div>
-            <div className="ghost-row">{ghost ? <p>Racing your {ghost.wpm} WPM best. <strong>{live.wpm - ghost.wpm >= 0 ? '+' : ''}{live.wpm - ghost.wpm} WPM</strong></p> : duration === 60 && pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">{duration === 60 ? 'Complete this mode to set a best and unlock your ghost.' : 'Pick 60 seconds to race your personal best.'}</p>}</div>
+            <div className="ghost-row">{ghost ? <><p>Target: <strong>{ghost.wpm} WPM</strong>. <strong>{Math.abs(characterDelta)} characters {characterDelta >= 0 ? 'ahead' : 'behind'}</strong>. Ghost position {ghostCursor} / {target.length}.{ghost.trace.length === 0 && ' Average-pace replay.'}</p><button className="text-button" onClick={() => navigate('type')}>Leave race</button></> : pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">Complete this mode to set a best and unlock your ghost.</p>}</div>
+            {localGhostUnavailable && <p role="status">Ghost unavailable. This record cannot be raced.</p>}
           </> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
             <div className="result-heading"><h2>That's your run.</h2>{result.isBest && <span className="best-stamp">New personal best</span>}</div>
+            {ghost && <div className="ghost-result"><h3>{ghostOutcome(result, ghost)}</h3><p>Your {result.wpm} WPM / {result.acc}% accuracy versus ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.</p><p>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM / {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0 ? '+' : ''}{Number((result.acc - ghost.accuracy).toFixed(1))} accuracy points</p></div>}
             <div className="result-hero"><div><span className="metric-label">Words per minute</span><strong>{result.wpm}</strong></div><div><span className="metric-label">Accuracy</span><strong>{result.acc}<small>%</small></strong></div></div>
-            <PaceChart samples={result.samples} comparison={result.previous?.samples || []} />
-            {!result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}
+            <PaceChart samples={result.samples} comparison={ghost ? ghostPace(ghost) : result.previous?.samples || []} comparisonLabel={ghost ? 'Challenged ghost' : 'Previous best'} />
+            {!ghost && !result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}
             <dl className="result-details"><div><dt>Raw WPM</dt><dd>{result.raw}</dd></div><div><dt>Net WPM</dt><dd>{result.wpm}</dd></div><div><dt>Consistency</dt><dd>{result.consistency}%</dd></div><div><dt>Elapsed</dt><dd>{Number(result.elapsed_s.toFixed(2))}s</dd></div></dl>
             <div className="missed-keys"><h3>Missed keys</h3>{rankMissed(result.missed_keys).length ? <ul>{rankMissed(result.missed_keys).map(([key, count]) => <li key={key}><kbd>{key}</kbd><span>{count} {count === 1 ? 'miss' : 'misses'}</span></li>)}</ul> : <p>No missed keys in this run.</p>}</div>
-            <div className="result-actions"><button className="brutal-btn primary" onClick={() => reset()}>Type again <kbd>Tab</kbd></button>{duration === 60 && pb && <button className="brutal-btn" onClick={rematch}>Race your best</button>}<button className="text-button" onClick={() => navigate('stats')}>View history</button></div>
+            <div className="result-actions"><button className="brutal-btn primary" onClick={() => reset()}>{ghost ? 'Rematch' : 'Type again'} <kbd>Tab</kbd></button>{!ghost && pb && <button className="brutal-btn" onClick={rematch}>Race your best</button>}{ghost && <button className="brutal-btn" onClick={() => navigate('type')}>Leave race</button>}<button className="text-button" onClick={() => navigate('stats')}>View history</button></div>
             <div className="result-meta"><span>{formatMode(result.mode)}</span>{ghost && <span>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM vs ghost</span>}<p role="status">{saveStatus}</p></div>
           </section>}
         </>}

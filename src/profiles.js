@@ -42,3 +42,8 @@ export function loadPublicProfile(handle, signal) {
   if (!supabase) return Promise.reject(new Error('Cloud is not configured'))
   return profileRequest(supabase.rpc('get_profile_dashboard', { requested_handle: handle }).maybeSingle(), signal)
 }
+
+export function loadOwnerGhost(mode, signal) {
+  if (!supabase) return Promise.reject(new Error('Cloud is not configured'))
+  return profileRequest(supabase.rpc('get_owner_ghost', { requested_mode: mode }).maybeSingle(), signal)
+}

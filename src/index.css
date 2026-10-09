@@ -76,6 +76,11 @@ fieldset:disabled .segmented button:not([aria-pressed="true"]) { color: var(--mu
 .correct { color: var(--ink); }
 .incorrect { color: var(--danger); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .ghost-char { box-shadow: inset 0 -3px 0 var(--ink); }
+.ghost-edge { border-left: 3px solid var(--ink); padding-left: 10px; margin: 8px 0; font-size: .75rem; line-height: 1.8; color: var(--ink); }
+.ghost-result { margin-top: 24px; padding: 18px 0; border-top: 3px solid var(--ink); border-bottom: 1px solid var(--rule); font-size: .8rem; line-height: 1.8; }
+.ghost-result h3 { font-size: 1rem; }
+.ghost-result p { margin-top: 8px; }
+.record-race { grid-column: 2 / -1; justify-self: start; }
 .typing-input { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; opacity: 0; cursor: text; font-size: 16px; padding: 20px; }
 .focus-cover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; padding: 20px; }
 .focus-cover span { border: 3px solid var(--ink); background: var(--accent); padding: 14px 20px; font-weight: 700; font-size: .85rem; text-align: center; }

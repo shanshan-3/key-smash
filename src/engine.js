@@ -1,6 +1,8 @@
-export const WORDS = (
+const WORDS_V1 = (
   'the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is are had has were been was will would can should may might must shall do does did have has had will would there here where when what which who whom whose that this these those then than that with from into over after before between through during under again once here there when where why how all any both each few more most other some such no nor not only own same so than too very can will just don should now'
 ).split(' ')
+export const WORDS = WORDS_V1
+export const WORD_SET_VERSION = 1
 
 function mulberry32(seed) {
   let t = seed >>> 0
@@ -12,9 +14,10 @@ function mulberry32(seed) {
   }
 }
 
-export function streamWords(seed, count) {
+export function streamWords(seed, count, version = WORD_SET_VERSION) {
+  if (version !== 1) throw new Error('Unsupported word set')
   const rand = mulberry32(seed)
-  return Array.from({ length: count }, () => WORDS[Math.floor(rand() * WORDS.length)])
+  return Array.from({ length: count }, () => WORDS_V1[Math.floor(rand() * WORDS_V1.length)])
 }
 
 export function scoreRun({ correctChars, keystrokes, seconds }) {
@@ -78,7 +81,7 @@ export function rankMissed(missed, limit = 12) {
   return Object.entries(missed).sort((a, b) => b[1] - a[1]).slice(0, limit)
 }
 
-export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, samples = [], elapsed = duration }) {
+export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, samples = [], elapsed = duration, wordSetVersion = WORD_SET_VERSION }) {
   return {
     wpm,
     acc,
@@ -87,6 +90,7 @@ export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, s
     word_count: wordCount,
     missed_keys: missed,
     seed,
+    word_set_version: wordSetVersion,
     samples,
     elapsed_s: elapsed,
   }

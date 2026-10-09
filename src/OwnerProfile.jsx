@@ -6,7 +6,7 @@ import Stats from './Stats.jsx'
 
 const emptyProfile = { handle: null, run_count: 0, average_wpm: null, average_accuracy: null, recorded_typing_seconds: null, personal_bests: [] }
 
-export default function OwnerProfile({ user, ownerProfile, onProfileChange, onBack, freshRun }) {
+export default function OwnerProfile({ user, ownerProfile, onProfileChange, onBack, onRace, freshRun }) {
   const [state, setState] = useState({ loading: true })
   const [retry, setRetry] = useState(0)
 
@@ -28,7 +28,7 @@ export default function OwnerProfile({ user, ownerProfile, onProfileChange, onBa
 
   return <div className="owner-profile">
     <div className="page-heading profile-masthead"><div><p className="profile-kicker">KEYSMASH / Performance ledger</p><h1 tabIndex={-1}>{handle ? `@${handle}` : 'Your profile'}</h1></div><button className="brutal-btn" onClick={onBack}>Start typing</button></div>
-    <ProfileLedger profile={state.profile}>
+    <ProfileLedger profile={state.profile} onRace={onRace}>
       {state.loading ? <p className="state-panel" role="status">Loading your profile...</p>
         : state.error ? <section className="state-panel" role="alert"><h2>Profile could not load.</h2><p>Your saved history is available below.</p><button className="brutal-btn" onClick={() => setRetry((n) => n + 1)}>Retry profile</button></section> : null}
       {controls}

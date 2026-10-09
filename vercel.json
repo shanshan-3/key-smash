@@ -4,6 +4,8 @@
     { "source": "/auth/callback", "destination": "/index.html" },
     { "source": "/stats", "destination": "/index.html" },
     { "source": "/profile", "destination": "/index.html" },
+    { "source": "/profile/race/:mode", "destination": "/index.html" },
+    { "source": "/profile/race", "destination": "/index.html" },
     { "source": "/u/:handle", "destination": "/index.html" }
   ]
 }
