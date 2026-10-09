@@ -17,3 +17,4 @@ ENERGY 3 / RHYTHM 2 / MOTION 1.
 - Guests can inspect their last 50 local runs. Cloud history is a separate authenticated source, with explicit loading and retry states.
 - Public profile controls sit above history so an empty run list never hides publishing. Public aggregates reuse the flat summary rows; zero-run profiles show no measured averages. Share URLs remain selectable if clipboard access fails.
 - Public records lead with an oversized handle, four ruled totals, and numbered score rows for the most-practiced modes. All records expand inline; narrow screens use a two-column ledger and stacked score rows.
+- Profile improvement uses a black stepped line and square points for weekly mode averages, with yellow reserved for the latest measured week. Missing weeks stay blank. Native mode/range controls and a weekly table expose the same values; chart labels keep their size on narrow screens.

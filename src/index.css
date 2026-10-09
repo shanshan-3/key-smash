@@ -154,6 +154,17 @@ select, .auth-dialog input { border: 2px solid var(--ink); border-radius: 0; bac
 .profile-totals dd { font-family: "Archivo Black", Arial, sans-serif; font-size: clamp(1.2rem, 3vw, 2.4rem); letter-spacing: -.04em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; margin-top: 8px; }
 .profile-data-note { color: var(--muted); font-size: .75rem; line-height: 1.8; margin-top: 16px; max-width: 75ch; }
 .profile-records { margin-top: 44px; }
+.profile-improvement { margin-top: 44px; }
+.improvement-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 20px 28px; margin-top: 24px; }
+.improvement-controls label { display: grid; gap: 8px; font-size: .75rem; font-weight: 700; max-width: 100%; }
+.improvement-chart { display: block; width: 100%; height: auto; margin-top: 20px; overflow: visible; }
+.improvement-chart text { font: 14px "Space Mono", monospace; fill: var(--muted); }
+.improvement-grid { stroke: var(--rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.improvement-line { fill: none; stroke: var(--ink); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.improvement-point { fill: var(--ink); }
+.improvement-point.latest { fill: var(--accent); stroke: var(--ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.improvement-data { margin-top: 16px; font-size: .75rem; }
+.improvement-data caption { text-align: left; color: var(--muted); padding: 14px 0; line-height: 1.8; }
 .record-sheet { list-style: none; margin: 0; padding: 0; }
 .record-sheet li { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 160px; align-items: center; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--rule); }
 .record-number { color: var(--muted); font-size: .75rem; }

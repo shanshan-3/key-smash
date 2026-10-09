@@ -1,6 +1,6 @@
 # Public profile deployment
 
-Apply migrations 0001–0006 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0007 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
@@ -43,14 +43,23 @@ a newer identity. Reload profile settings resolves stale-tab feedback.
 Passing a normalized handle to the dashboard RPC returns only a published
 profile. A null handle returns only the authenticated caller's own profile,
 including unpublished profiles; anonymous callers receive no row. The owner
-dashboard uses this private lookup. Trends, activity, and race actions remain
-separate tickets.
+dashboard uses this private lookup. Both owner and public dashboards show
+weekly mode improvement. Activity and race actions remain separate tickets.
 
 Migration 0006 reserves `profile` for future handle claims through an insert/update
 trigger. Existing accounts using that handle keep their URL and publication
 controls. The trigger rejects changing another handle to `profile`; ordinary
 publication changes and unchanged handles remain allowed. Apply it before the
 owner workspace frontend. Migration 0005 remains required for owner aggregates.
+
+Migration 0007 extends `get_profile_dashboard` with `weekly_mode_trends`.
+Its changed table return type requires dropping and recreating the function in
+one transaction, restoring the empty search path and explicit execution grants.
+Apply it before deploying the improvement chart. The legacy public RPC and
+existing dashboard fields remain available. Each weekly entry contains only
+`week_start` (a UTC Monday date), `mode`, `run_count`, and rounded `average_wpm`.
+The current UTC week and previous 51 weeks are included; older results remain
+in all-time totals and personal records. Missing weeks have no aggregate entry.
 
 ## Verification — 2026-10-08
 
@@ -160,3 +169,38 @@ Independent Standards and Spec reviews found two correctness issues and one
 duplication concern, all fixed and re-reviewed with no remaining findings.
 Migration 0006 has not been applied to live Supabase. Apply it before deployment
 and smoke-check real authentication and hosting fallbacks afterward.
+
+## Ticket 04 verification — 2026-10-09
+
+The shared dashboard now renders weekly mode improvement below personal records,
+before private owner history. Its default mode follows featured-record ordering:
+run count descending, best WPM descending, then mode identifier. The selector
+offers every practiced combined mode. The range buttons select 12, 26, or 52
+UTC Monday buckets including the current week. Black steps connect consecutive
+measured weeks, square points show each measurement, and yellow identifies the
+latest measured week. Missing weeks remain gaps; recorded zero WPM remains a
+measurement. A native disclosure exposes every bucket's date, WPM, and run count.
+Mode/range status is announced, and SVG marks have no keyboard tab stops.
+
+Lint and production build pass. No typecheck or automated test suite is
+configured, and no automated test tooling or dependencies were added.
+Independent Standards and Spec reviews found no actionable issues.
+
+Temporary PGlite verification applied migrations 0001–0007 and checked a
+211-result profile, 205 runs in one week, rounded mode averages, the exact
+oldest included bucket, the excluded preceding microsecond, Sunday/Monday UTC
+boundaries, exclusion of the next week's boundary, and identical trends under
+Singapore and Los Angeles session timezones. Weekly objects contain exactly the
+four documented summary fields. Anonymous private/unpublished requests remain
+empty, raw table reads remain denied, and unpublished owners can read trends.
+
+Temporary headless Chrome fixtures verified all three bucket counts, default
+mode ordering and ties, gaps, real zero WPM, latest-point emphasis, single-mode
+and single-week views, zero-mode and empty-range states, the accessible table
+and live status, keyboard controls, reduced motion, shared owner/public placement,
+new cloud measurements after reload, retry and generic not-found states.
+Desktop and 320px screenshots were inspected. Mobile document width remains
+320px and chart labels retain their size as the viewport changes.
+
+Migration 0007 has not been applied to live Supabase. Apply it before deployment;
+these fixture checks do not replace the live authentication and hosting smoke check.

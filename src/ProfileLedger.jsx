@@ -1,4 +1,5 @@
 import { formatMode } from './history.js'
+import ProfileImprovement from './ProfileImprovement.jsx'
 
 function formatTypingTime(seconds) {
   if (seconds == null) return '—'
@@ -20,7 +21,8 @@ function compareModes(a, b) {
 
 export default function ProfileLedger({ profile, children }) {
   const records = profile?.personal_bests || []
-  const featured = [...records].sort((a, b) => b.run_count - a.run_count || b.wpm - a.wpm || a.mode.localeCompare(b.mode, 'en')).slice(0, 4)
+  const practicedModes = [...records].sort((a, b) => b.run_count - a.run_count || b.wpm - a.wpm || a.mode.localeCompare(b.mode, 'en'))
+  const featured = practicedModes.slice(0, 4)
   const allModes = [...records].sort(compareModes)
 
   return <>
@@ -50,5 +52,6 @@ export default function ProfileLedger({ profile, children }) {
           </div>
         </details>
       </section>}
+    {profile && <ProfileImprovement modes={practicedModes} trends={profile.weekly_mode_trends || []} />}
   </>
 }
