@@ -1,6 +1,6 @@
 # Public profile deployment
 
-Apply migrations 0001–0007 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0008 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
@@ -44,7 +44,8 @@ Passing a normalized handle to the dashboard RPC returns only a published
 profile. A null handle returns only the authenticated caller's own profile,
 including unpublished profiles; anonymous callers receive no row. The owner
 dashboard uses this private lookup. Both owner and public dashboards show
-weekly mode improvement. Activity and race actions remain separate tickets.
+weekly mode improvement and a 52-week activity ledger. Race actions remain
+separate tickets.
 
 Migration 0006 reserves `profile` for future handle claims through an insert/update
 trigger. Existing accounts using that handle keep their URL and publication
@@ -60,6 +61,14 @@ existing dashboard fields remain available. Each weekly entry contains only
 `week_start` (a UTC Monday date), `mode`, `run_count`, and rounded `average_wpm`.
 The current UTC week and previous 51 weeks are included; older results remain
 in all-time totals and personal records. Missing weeks have no aggregate entry.
+
+Migration 0008 adds `weekly_activity` to the same aggregate RPC, recreating it
+atomically and restoring execution grants. Apply it before deploying the activity
+ledger. Activity contains exactly 52 chronological UTC Monday dates and completed
+cloud-run counts across every mode, including zero-run buckets. Only `week_start`
+and `run_count` are returned for each entry. Existing totals, records, trends, and
+the legacy public lookup remain available. The frontend uses the returned window
+as a snapshot until navigation or reload, so the browser clock cannot shift it.
 
 ## Verification — 2026-10-08
 
@@ -204,3 +213,42 @@ Desktop and 320px screenshots were inspected. Mobile document width remains
 
 Migration 0007 has not been applied to live Supabase. Apply it before deployment;
 these fixture checks do not replace the live authentication and hosting smoke check.
+
+## Ticket 05 verification — 2026-10-09
+
+Public and owner dashboards now show the activity strike ledger after improvement,
+before private owner history. Each measured week's yellow strike scales against
+the busiest visible week. Zero weeks retain an inspectable position without a
+fabricated strike; an entirely inactive year has an explicit empty state. The
+selected week has a black underline and keyboard focus has an outline. Desktop
+shows 52 positions in one row; narrow screens show two chronological rows of 26.
+
+The ledger has one roving tab stop. Left/right and up/down inspect adjacent
+weeks; Home/End select the oldest/latest week. Every button announces its exact
+UTC date range and completed-run count. Hover, tap, and a native week selector
+provide equivalent details through a visible live status. The selector makes
+exact inspection available without needing to tap a narrow strike.
+
+Lint and production build pass. No typecheck or automated test suite is configured;
+no automated test tooling or dependencies were added. Independent Standards and
+Spec reviews are clear after fixing a client-clock issue: the ledger now renders
+server buckets directly rather than recalculating dates on interaction.
+
+Temporary PGlite checks applied migrations 0001–0008. A 211-result profile
+returned all-time totals and 52 activity buckets, with 206 current-week runs
+across two modes. Exact oldest-week and Sunday/Monday boundaries, zero weeks,
+January 1 grouped into its preceding-year UTC Monday, fresh counts on the next
+request, and an empty profile's 52 zero buckets passed. Existing mode trends,
+timezone independence, aggregate-only fields, anonymous privacy, and unpublished
+owner access passed as well.
+
+Temporary headless Chrome checks covered all-zero, single-week, uneven-volume,
+and equal-maximum histories; one tab stop; arrow/Home/End navigation and exact
+live announcements; hover outlines; actual touch taps and native selection;
+reduced motion; owner placement; anonymous public lookup; reload freshness;
+request retry and generic not-found. Moving the browser clock forward a week
+left server dates and counts unchanged. Desktop and 320px screenshots were
+inspected; mobile document width remained 320px.
+
+Migration 0008 has not been applied to live Supabase. Apply it before frontend
+deployment and complete the live authentication/hosting smoke checks afterward.

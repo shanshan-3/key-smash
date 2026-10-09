@@ -1,5 +1,6 @@
 import { formatMode } from './history.js'
 import ProfileImprovement from './ProfileImprovement.jsx'
+import ProfileActivity from './ProfileActivity.jsx'
 
 function formatTypingTime(seconds) {
   if (seconds == null) return '—'
@@ -53,5 +54,6 @@ export default function ProfileLedger({ profile, children }) {
         </details>
       </section>}
     {profile && <ProfileImprovement modes={practicedModes} trends={profile.weekly_mode_trends || []} />}
+    {profile && <ProfileActivity activity={profile.weekly_activity || []} />}
   </>
 }
