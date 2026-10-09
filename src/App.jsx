@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
 import { ghostOutcome, ghostPace, ghostPosition, prepareGhost } from './ghosts.js'
+import { isRacePath, raceRequest } from './raceRoutes.js'
 import { formatMode, loadPbs, saveRun } from './history.js'
 import Stats from './Stats.jsx'
 import PublicProfile from './PublicProfile.jsx'
 import OwnerProfile from './OwnerProfile.jsx'
 import AccountMenu from './AccountMenu.jsx'
-import { loadOwnerGhost, loadOwnerProfile } from './profiles.js'
+import { loadOwnerGhost, loadOwnerProfile, loadPublicGhost } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, supabase } from './supabase.js'
 
@@ -14,7 +15,7 @@ const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
 const WORDS_PER_PAGE = 20
 const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, now: Date.now(), result: null })
-const currentPage = () => window.location.pathname === '/profile/race' || window.location.pathname.startsWith('/profile/race/') ? 'race' : window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
+const currentPage = () => isRacePath(window.location.pathname) ? 'race' : window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
 
 export default function App() {
   const [duration, setDuration] = useState(60)
@@ -45,6 +46,10 @@ export default function App() {
   const ownerProfileVersion = useRef(0)
   const [route, setRoute] = useState(() => window.location.pathname + window.location.hash)
   const [page, setPage] = useState(currentPage)
+  const request = raceRequest(route.split('#')[0])
+  const publicRace = page === 'race' && !request.owner
+  const raceAccount = publicRace ? null : user?.id
+  const raceAuthPending = !publicRace && (authRestoring || authLoading)
   const typingPage = page === 'type' || page === 'race'
   const [publicHandle, setPublicHandle] = useState(() => window.location.pathname.slice(3))
   const [freshRun, setFreshRun] = useState(0)
@@ -193,7 +198,7 @@ export default function App() {
 
   useEffect(() => {
     if (authRestoring || authLoading) return
-    const redirect = page === 'stats' && user ? `/profile${window.location.hash}` : (page === 'owner' || page === 'race') && !user ? '/stats' : null
+    const redirect = page === 'stats' && user ? `/profile${window.location.hash}` : (page === 'owner' || (page === 'race' && !publicRace)) && !user ? '/stats' : null
     if (redirect) {
       window.history.replaceState({}, '', redirect)
       setRoute(redirect)
@@ -218,23 +223,24 @@ export default function App() {
       return
     }
     cloudRaceActive.current = true
-    if (authRestoring || authLoading || !user) return
+    if (raceAuthPending || (!publicRace && !raceAccount)) return
     let active = true
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 10000)
-    const mode = window.location.pathname.slice('/profile/race/'.length)
-    setRaceState({ route, userId: user.id, loading: true })
+    const { handle, mode, valid } = raceRequest(window.location.pathname)
+    setRaceState({ route, userId: raceAccount, loading: true })
     setGhost(null)
     updateRun(idleRun())
-    loadOwnerGhost(mode, controller.signal).then((data) => {
+    const lookup = !valid ? Promise.resolve(null) : publicRace ? loadPublicGhost(handle, mode, controller.signal) : loadOwnerGhost(mode, controller.signal)
+    lookup.then((data) => {
       if (!active) return
       const selected = prepareGhost(data)
-      if (!selected || selected.mode !== mode) { setRaceState({ route, userId: user.id, unavailable: true }); return }
+      if (!selected || selected.mode !== mode || (publicRace && selected.handle !== handle)) { setRaceState({ route, userId: raceAccount, unavailable: true }); return }
       reset(selected.duration_s, selected.word_count, selected.seed, selected)
-      setRaceState({ route, userId: user.id, ready: true })
-    }, () => { if (active) setRaceState({ route, userId: user.id, error: true }) }).finally(() => clearTimeout(timeout))
+      setRaceState({ route, userId: raceAccount, ready: true })
+    }, () => { if (active) setRaceState({ route, userId: raceAccount, error: true }) }).finally(() => clearTimeout(timeout))
     return () => { active = false; clearTimeout(timeout); controller.abort() }
-  }, [page, route, user?.id, authRestoring, authLoading, raceRetry])
+  }, [page, route, raceAccount, raceAuthPending, raceRetry])
 
   useEffect(() => {
     if (!authLoading || !supabase) return
@@ -267,7 +273,7 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e) {
-      if (!typingPage || (page === 'race' && (!raceState.ready || raceState.route !== route || raceState.userId !== user?.id)) || authOpen || runRef.current.result || e.ctrlKey || e.metaKey || e.altKey) return
+      if (!typingPage || (page === 'race' && (!raceState.ready || raceState.route !== route || raceState.userId !== raceAccount)) || authOpen || runRef.current.result || e.ctrlKey || e.metaKey || e.altKey) return
       if (document.activeElement !== document.body || e.key.length !== 1) return
       e.preventDefault()
       inputRef.current?.focus()
@@ -275,7 +281,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [page, raceState.ready, authOpen, duration, wordCount, target])
+  }, [page, route, raceAccount, raceState.ready, authOpen, duration, wordCount, target])
 
   function navigate(next) {
     const path = next.startsWith('/') ? next : next === 'stats' ? (user ? '/profile#history' : '/stats') : '/'
@@ -345,15 +351,16 @@ export default function App() {
     else { setUser(null); setOwnerProfile(null); navigate('type') }
   }
 
+  const challengedHandle = publicRace && ghost?.handle ? `@${ghost.handle}` : null
   const result = run.result
   const cursor = run.typed.length
   const ghostCursor = ghost ? Math.floor(ghostPosition(ghost, elapsed)) : -1
   const characterDelta = ghost ? correctCount(target, run.typed) - ghostCursor : 0
   const pageEnd = pageStart + pageWords.join(' ').length
-  const raceReady = page !== 'race' || (raceState.ready && raceState.route === route && raceState.userId === user?.id)
+  const raceReady = page !== 'race' || (raceState.ready && raceState.route === route && raceState.userId === raceAccount)
   let charOffset = pageStart
 
-  if (authLoading || ((page === 'owner' || page === 'race' || page === 'stats') && (authRestoring || ((page === 'owner' || page === 'race') && !user) || (page === 'stats' && user)))) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
+  if (authLoading || ((page === 'owner' || (page === 'race' && !publicRace) || page === 'stats') && (authRestoring || ((page === 'owner' || page === 'race') && !user) || (page === 'stats' && user)))) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
 
   return (
     <div className="app-shell">
@@ -363,8 +370,8 @@ export default function App() {
         <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button>{user ? <AccountMenu current={page === 'owner'} route={route} profile={ownerProfile?.userId === user.id ? ownerProfile : null} onNavigate={navigate} onLogout={logout} /> : <><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>}</>}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
-        {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} onRace={(mode) => navigate(`/profile/race/${mode}`)} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : !raceReady ? <><div className="page-heading"><h1 tabIndex={-1}>Your ghost race.</h1><button className="brutal-btn" onClick={() => navigate('/profile')}>Back to profile</button></div>{raceState.route !== route || raceState.loading ? <p className="state-panel" role="status">Loading ghost...</p> : raceState.error ? <section className="state-panel" role="alert"><h2>Ghost could not load.</h2><p>Check your connection and try again.</p><button className="brutal-btn" onClick={() => setRaceRetry((n) => n + 1)}>Retry ghost</button></section> : <section className="state-panel"><h2>Ghost unavailable.</h2><p>This record cannot be raced.</p></section>}</> : <>
-          <div className="test-heading"><h1 tabIndex={-1}>{ghost ? 'Race your best.' : 'Less talk. More type.'}</h1><p>{ghost ? `${formatMode(ghost.mode)} / Target: ${ghost.wpm} WPM, ${ghost.accuracy}% accuracy` : 'Beat the clock. Then beat yourself.'}</p></div>
+        {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} onRace={(mode) => navigate(`/profile/race/${mode}`)} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} onRace={(handle, mode) => navigate(`/u/${handle}/race/${mode}`)} /> : !raceReady ? <><div className="page-heading"><h1 tabIndex={-1}>{publicRace ? 'Public ghost race.' : 'Your ghost race.'}</h1><button className="brutal-btn" onClick={() => navigate(publicRace ? request.valid ? `/u/${request.handle}` : '/' : '/profile')}>{publicRace && !request.valid ? 'Start typing' : 'Back to profile'}</button></div>{raceState.route !== route || raceState.loading ? <p className="state-panel" role="status">Loading ghost...</p> : raceState.error ? <section className="state-panel" role="alert"><h2>Ghost could not load.</h2><p>Check your connection and try again.</p><button className="brutal-btn" onClick={() => setRaceRetry((n) => n + 1)}>Retry ghost</button></section> : <section className="state-panel"><h2>Ghost unavailable.</h2><p>This record cannot be raced.</p></section>}</> : <>
+          <div className="test-heading"><h1 tabIndex={-1}>{challengedHandle ? `Race ${challengedHandle}.` : ghost ? 'Race your best.' : 'Less talk. More type.'}</h1><p>{ghost ? `${formatMode(ghost.mode)} / Target: ${ghost.wpm} WPM, ${ghost.accuracy}% accuracy` : 'Beat the clock. Then beat yourself.'}</p></div>
           <div className="test-settings">
             <fieldset disabled={active || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
             <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>
@@ -404,7 +411,7 @@ export default function App() {
             {localGhostUnavailable && <p role="status">Ghost unavailable. This record cannot be raced.</p>}
           </> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
             <div className="result-heading"><h2>That's your run.</h2>{result.isBest && <span className="best-stamp">New personal best</span>}</div>
-            {ghost && <div className="ghost-result"><h3>{ghostOutcome(result, ghost)}</h3><p>Your {result.wpm} WPM / {result.acc}% accuracy versus ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.</p><p>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM / {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0 ? '+' : ''}{Number((result.acc - ghost.accuracy).toFixed(1))} accuracy points</p></div>}
+            {ghost && <div className="ghost-result"><h3>{ghostOutcome(result, ghost)}</h3><p>{challengedHandle && `Challenged ${challengedHandle}. `}Your {result.wpm} WPM / {result.acc}% accuracy versus ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.</p><p>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM / {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0 ? '+' : ''}{Number((result.acc - ghost.accuracy).toFixed(1))} accuracy points</p></div>}
             <div className="result-hero"><div><span className="metric-label">Words per minute</span><strong>{result.wpm}</strong></div><div><span className="metric-label">Accuracy</span><strong>{result.acc}<small>%</small></strong></div></div>
             <PaceChart samples={result.samples} comparison={ghost ? ghostPace(ghost) : result.previous?.samples || []} comparisonLabel={ghost ? 'Challenged ghost' : 'Previous best'} />
             {!ghost && !result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}

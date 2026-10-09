@@ -1,6 +1,6 @@
 # Public profile deployment
 
-Apply migrations 0001–0009 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0010 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
@@ -314,3 +314,46 @@ generator across all word counts and multiple seeds and remained identical.
 
 Migration 0009 has not been applied to live Supabase. Apply it before frontend
 deployment and smoke-check real authentication, race deep links, and cloud saves.
+
+## Ticket 07 verification — 2026-10-09
+
+Published record rows and the expanded records table now offer Race this ghost.
+Public challenges use `/u/:handle/race/:mode` with hosting rewrites for direct
+loads and refresh. Guests and signed-in challengers share the existing locked,
+seeded race engine. Restart/rematch retain the selected ghost; ordinary typing
+clears it and browser history restores the challenge from its URL.
+
+Migration 0010 adds `get_profile_ghost` with anonymous and authenticated execution.
+A non-null handle selects only a currently published profile's winning mode,
+ordered by WPM, accuracy, then internal ID. Only the approved replay fields and
+derived second/position trace leave the lookup. Raw profile/result/sample access
+remains denied to anonymous callers. The existing authenticated owner RPC delegates
+to the same selection logic, preserving access to private owner records.
+
+Results name the challenged handle and show outcome, deltas, ghost pace, and an
+independent challenger PB badge. Saves use the challenger's normal local history
+and, when signed in, their own cloud account. A ghost already in memory survives
+owner unpublishing and challenger login; fresh loads check current publication.
+
+Lint and production build pass. Standards and Spec reviews have no remaining
+findings after fixing long-handle wrapping. No automated test tooling or dependencies
+were added; the repository has no configured typecheck or automated test suite.
+
+Temporary PGlite checks applied migrations 0001–0010 and verified normalized
+anonymous lookup, exact winning-run ordering and field whitelist, filtered trace,
+missing modes/handles, rename/unpublish invalidation, raw-table denial, preserved
+private owner access, challenger insert isolation, RLS rejection of owner inserts,
+and an unchanged owner profile and complete result set after challenger saves.
+
+Temporary headless Chrome fixtures covered all 16 public modes, featured/table
+actions, direct links, refresh, back/forward, deterministic text, locked settings,
+restart/rematch, generic invalid-route/handle/version states, retryable network
+errors, old-record fallback, guest local/PB saves, signed-in challenger cloud saves,
+mid-race unpublish and login, no owner mutations, keyboard restart, and reduced
+motion. At 320px, race and result screens also fit maximum-length wide-character
+handles. The mobile race screenshot was inspected. Malformed percent encoding was
+checked through browser history because Vite rejects it before serving the SPA.
+
+Migration 0010 has not been applied to live Supabase. Apply it before deploying
+the frontend, then smoke-check real authentication, public deep links, publication
+changes, and cloud saves on the deployed host.

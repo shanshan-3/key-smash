@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { handleError, loadPublicProfile } from './profiles.js'
 import ProfileLedger from './ProfileLedger.jsx'
 
-export default function PublicProfile({ handle, onBack }) {
+export default function PublicProfile({ handle, onBack, onRace }) {
   const [state, setState] = useState({ loading: true })
   const [retry, setRetry] = useState(0)
 
@@ -25,6 +25,6 @@ export default function PublicProfile({ handle, onBack }) {
     {state.loading ? <p className="state-panel" role="status">Loading profile...</p>
       : state.error ? <section className="state-panel" role="alert"><h2>Profile could not load.</h2><p>Check your connection and try again.</p><button className="brutal-btn" onClick={() => setRetry((n) => n + 1)}>Retry profile</button></section>
         : !state.profile ? <section className="state-panel"><h2>Profile not found.</h2><p>This public profile is unavailable.</p></section>
-          : <ProfileLedger profile={state.profile} />}
+          : <ProfileLedger profile={state.profile} onRace={(mode) => onRace(state.profile.handle, mode)} />}
   </div>
 }
