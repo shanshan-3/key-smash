@@ -366,7 +366,7 @@ export default function App() {
     <div className="app-shell">
       <a href="#main" className="skip-link">Skip to typing</a>
       <header className="masthead">
-        <button className="wordmark" onClick={() => navigate('type')} aria-label="KEYSMASH home">KEYSMASH<span aria-hidden="true">.</span></button>
+        <button className="wordmark" onClick={() => navigate('type')} aria-label="KEYSMASH home"><img src="/favicon.png" alt="" width="40" height="40" />KEYSMASH<span aria-hidden="true">.</span></button>
         <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button>{user ? <AccountMenu current={page === 'owner'} route={route} profile={ownerProfile?.userId === user.id ? ownerProfile : null} onNavigate={navigate} onLogout={logout} /> : <><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>}</>}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
