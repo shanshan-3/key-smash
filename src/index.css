@@ -35,6 +35,14 @@ nav { display: flex; gap: 6px; flex-wrap: wrap; }
 nav button { border: 0; background: transparent; min-height: 44px; padding: 8px 14px; font-size: .8rem; font-weight: 700; }
 nav button[aria-current="page"] { background: var(--ink); color: white; }
 nav button:hover:not([aria-current]) { text-decoration: underline; text-underline-offset: 5px; }
+.account-menu { position: relative; }
+.account-menu-items { position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: min(240px, calc(100vw - 36px)); background: var(--paper); border: 3px solid var(--ink); padding: 8px; }
+.account-menu-items button { display: block; width: 100%; text-align: left; }
+.account-menu-items button:focus-visible { outline-offset: -3px; }
+.owner-profile h1 { overflow-wrap: anywhere; }
+.owner-profile > .state-panel { margin-top: 30px; }
+.owner-profile > .stats-page { margin-top: 56px; border-top: 4px solid var(--ink); padding-top: 28px; }
+#history { scroll-margin-top: 24px; }
 .app-main { padding: 42px 0 64px; min-height: calc(100vh - 195px); }
 .test-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 34px; }
 .test-heading p, .page-heading p { font-size: .8rem; color: var(--muted); line-height: 1.8; }
@@ -208,6 +216,7 @@ th:first-child, td:first-child { padding-left: 0; }
   .app-shell { padding: 0 18px; }
   .masthead { padding: 20px 0 16px; gap: 8px; flex-wrap: wrap; }
   nav { gap: 0; }
+  nav:has(.account-menu) { margin-left: auto; }
   nav button { padding: 8px 10px; }
   .app-main { padding: 28px 0 44px; }
   .test-settings { gap: 16px; }

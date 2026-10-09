@@ -11,7 +11,7 @@ export default function PublicProfile({ handle, onBack }) {
     const timeout = setTimeout(() => controller.abort(), 10000)
     let active = true
     setState({ loading: true })
-    const request = handleError(handle) ? Promise.resolve(null) : loadPublicProfile(handle, controller.signal)
+    const request = handleError(handle, true) ? Promise.resolve(null) : loadPublicProfile(handle, controller.signal)
     request.then((profile) => {
       if (active) setState({ profile })
     }, () => {

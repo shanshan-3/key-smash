@@ -18,20 +18,21 @@ function compareModes(a, b) {
   return a.mode.localeCompare(b.mode, 'en')
 }
 
-export default function ProfileLedger({ profile }) {
-  const records = profile.personal_bests
+export default function ProfileLedger({ profile, children }) {
+  const records = profile?.personal_bests || []
   const featured = [...records].sort((a, b) => b.run_count - a.run_count || b.wpm - a.wpm || a.mode.localeCompare(b.mode, 'en')).slice(0, 4)
   const allModes = [...records].sort(compareModes)
 
   return <>
-    <dl className="profile-totals">
+    {profile && <><dl className="profile-totals">
       <div><dt>Completed runs</dt><dd>{profile.run_count}</dd></div>
       <div><dt>Average WPM</dt><dd>{profile.average_wpm ?? '—'}</dd></div>
       <div><dt>Average accuracy</dt><dd>{profile.average_accuracy == null ? '—' : `${profile.average_accuracy}%`}</dd></div>
       <div><dt>Recorded typing time</dt><dd>{formatTypingTime(profile.recorded_typing_seconds)}</dd></div>
     </dl>
-    <p className="profile-data-note">All-time cloud results across every mode. Typing time includes measured runs only; local-only runs stay on their device.</p>
-    {Number(profile.run_count) === 0 ? <section className="state-panel"><h2>No cloud runs yet.</h2><p>Records and averages appear after the first cloud-saved run.</p></section>
+    <p className="profile-data-note">All-time cloud results across every mode. Typing time includes measured runs only; local-only runs stay on their device.</p></>}
+    {children}
+    {!profile ? null : Number(profile.run_count) === 0 ? <section className="state-panel"><h2>No cloud runs yet.</h2><p>Records and averages appear after the first cloud-saved run.</p></section>
       : <section className="profile-records" aria-labelledby="profile-records-title">
         <div className="section-heading"><h2 id="profile-records-title">Personal records.</h2><p>Most-practiced modes. Each score is a best.</p></div>
         <ol className="record-sheet">{featured.map((record, index) => <li key={record.mode}>

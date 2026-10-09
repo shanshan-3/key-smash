@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, ghostIndex, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
 import { formatMode, loadPbs, saveRun } from './history.js'
 import Stats from './Stats.jsx'
 import PublicProfile from './PublicProfile.jsx'
+import OwnerProfile from './OwnerProfile.jsx'
+import AccountMenu from './AccountMenu.jsx'
+import { loadOwnerProfile } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, supabase } from './supabase.js'
 
@@ -10,7 +13,7 @@ const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
 const WORDS_PER_PAGE = 20
 const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, now: Date.now(), result: null })
-const currentPage = () => window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
+const currentPage = () => window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
 
 export default function App() {
   const [duration, setDuration] = useState(60)
@@ -31,6 +34,10 @@ export default function App() {
   const [authMsg, setAuthMsg] = useState('')
   const [authPending, setAuthPending] = useState(false)
   const [authLoading, setAuthLoading] = useState(() => !!supabase && window.location.pathname === '/auth/callback')
+  const [authRestoring, setAuthRestoring] = useState(!!supabase)
+  const [ownerProfile, setOwnerProfile] = useState(null)
+  const ownerProfileVersion = useRef(0)
+  const [route, setRoute] = useState(() => window.location.pathname + window.location.hash)
   const [page, setPage] = useState(currentPage)
   const [publicHandle, setPublicHandle] = useState(() => window.location.pathname.slice(3))
   const [freshRun, setFreshRun] = useState(0)
@@ -137,11 +144,12 @@ export default function App() {
   useEffect(() => {
     const onPop = () => {
       setPage(currentPage())
+      setRoute(window.location.pathname + window.location.hash)
       setPublicHandle(window.location.pathname.slice(3))
-      requestAnimationFrame(() => document.querySelector('main h1')?.focus())
     }
     window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+    window.addEventListener('hashchange', onPop)
+    return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('hashchange', onPop) }
   }, [])
 
   useEffect(() => {
@@ -150,11 +158,46 @@ export default function App() {
     supabase.auth.getSession().then(({ data, error }) => {
       if (!mounted) return
       setUser(data?.session?.user || null)
+      setAuthRestoring(false)
       if (error) setAuthMsg('Could not restore your login. Try logging in again.')
-    }, () => { if (mounted) setAuthMsg('Could not connect to login. Typing still works on this device.') })
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user || null) })
+    }, () => { if (mounted) { setAuthRestoring(false); setAuthMsg('Could not connect to login. Typing still works on this device.') } })
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => { if (mounted) { setUser(session?.user || null); setAuthRestoring(false) } })
     return () => { mounted = false; data.subscription.unsubscribe() }
   }, [])
+
+  const updateOwnerProfile = useCallback((profile) => {
+    ownerProfileVersion.current++
+    setOwnerProfile({ ...profile, userId: user?.id })
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!user || !supabase) { setOwnerProfile(null); return }
+    let active = true
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    const version = ownerProfileVersion.current
+    loadOwnerProfile(user.id, controller.signal).then((profile) => {
+      if (active && version === ownerProfileVersion.current) updateOwnerProfile(profile || { handle: null, published: false })
+    }, () => { if (active && version === ownerProfileVersion.current) setOwnerProfile(null) }).finally(() => clearTimeout(timeout))
+    return () => { active = false; clearTimeout(timeout); controller.abort() }
+  }, [user?.id, updateOwnerProfile])
+
+  useEffect(() => {
+    if (authRestoring || authLoading) return
+    const redirect = page === 'stats' && user ? `/profile${window.location.hash}` : page === 'owner' && !user ? '/stats' : null
+    if (redirect) {
+      window.history.replaceState({}, '', redirect)
+      setRoute(redirect)
+      setPage(currentPage())
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      const heading = page === 'owner' && window.location.hash === '#history' ? document.getElementById('history') : document.querySelector('main h1')
+      heading?.focus()
+      if (heading) heading.scrollIntoView({ block: 'start' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [route, page, user?.id, authRestoring, authLoading])
 
   useEffect(() => {
     if (!authLoading || !supabase) return
@@ -164,6 +207,8 @@ export default function App() {
     const complete = (message) => {
       if (!mounted) return
       window.history.replaceState({}, '', '/')
+      setPage('type')
+      setRoute('/')
       setAuthLoading(false)
       if (message) { setAuthMsg(message); setAuthOpen(true) }
     }
@@ -196,10 +241,17 @@ export default function App() {
   }, [page, authOpen, duration, wordCount, target])
 
   function navigate(next) {
-    setPage(next)
+    const path = next.startsWith('/') ? next : next === 'stats' ? (user ? '/profile#history' : '/stats') : '/'
+    window.history.pushState({}, '', path)
+    setPage(currentPage())
+    setRoute(path)
+    setPublicHandle(window.location.pathname.slice(3))
     setAuthOpen(false)
-    window.history.pushState({}, '', next === 'stats' ? '/stats' : '/')
-    requestAnimationFrame(() => document.querySelector('main h1')?.focus())
+    requestAnimationFrame(() => {
+      const heading = path.endsWith('#history') ? document.getElementById('history') : document.querySelector('main h1')
+      heading?.focus()
+      if (!path.endsWith('#history')) window.scrollTo(0, 0)
+    })
   }
 
   function acceptText(next) {
@@ -251,7 +303,7 @@ export default function App() {
   async function logout() {
     const { error } = await supabase.auth.signOut().catch(() => ({ error: true }))
     if (error) { setAuthMsg('Logout failed. Check your connection and try again.'); setAuthOpen(true) }
-    else setUser(null)
+    else { setUser(null); setOwnerProfile(null); navigate('type') }
   }
 
   const result = run.result
@@ -259,17 +311,17 @@ export default function App() {
   const ghostCursor = ghost ? ghostIndex({ wpm: ghost.wpm, seconds: elapsed }) : -1
   let charOffset = pageStart
 
-  if (authLoading) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
+  if (authLoading || ((page === 'owner' || page === 'stats') && (authRestoring || (page === 'owner' && !user) || (page === 'stats' && user)))) return <main className="app-main"><p className="state-panel" role="status">Connecting your account...</p></main>
 
   return (
     <div className="app-shell">
       <a href="#main" className="skip-link">Skip to typing</a>
       <header className="masthead">
         <button className="wordmark" onClick={() => navigate('type')} aria-label="KEYSMASH home">KEYSMASH<span aria-hidden="true">.</span></button>
-        <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && (user ? <button onClick={logout}>Log out</button> : <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>)}</nav>
+        <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button>{user ? <AccountMenu current={page === 'owner'} route={route} profile={ownerProfile?.userId === user.id ? ownerProfile : null} onNavigate={navigate} onLogout={logout} /> : <><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>}</>}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
-        {page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : <>
+        {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} /> : <>
           <div className="test-heading"><h1 tabIndex={-1}>Less talk. More type.</h1><p>Beat the clock. Then beat yourself.</p></div>
           <div className="test-settings">
             <fieldset disabled={active}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount)}>{d}<span>s</span></button>)}</div></fieldset>

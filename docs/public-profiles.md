@@ -1,6 +1,6 @@
 # Public profile deployment
 
-Apply migrations 0001–0005 to Supabase in order before deploying the profile UI.
+Apply migrations 0001–0006 to Supabase in order before deploying the profile UI.
 Migration 0004 backfills missing profile rows without publishing any account,
 adds owner updates and handle constraints, and grants anonymous callers access
 to `get_public_profile` only. Run it as the migration/database owner so the
@@ -13,7 +13,7 @@ Do not deploy the new frontend first: a missing dashboard RPC produces the
 public page's retryable request error. Private history and publishing controls
 continue to use their existing endpoints.
 
-Deploy the frontend and `vercel.json` together. The `/stats` and `/u/:handle`
+Deploy the frontend and `vercel.json` together. The `/stats`, `/profile`, and `/u/:handle`
 rewrites serve the application on direct navigation and refresh. Other hosts
 need equivalent SPA fallbacks for these paths.
 
@@ -35,12 +35,22 @@ refreshes its data on reload or navigation, rather than polling.
 Handles are lowercased before submission and validated again in the database.
 The unique index arbitrates concurrent claims. An unavailable handle is reported
 inline after submission; no anonymous availability endpoint exposes private
-handles. Unpublishing retains the handle. Renaming remains a separate ticket.
+handles. Unpublishing retains the handle. Owner controls support inline rename
+with save/cancel and preserve publication state. Both rename and publication
+updates require the expected persisted handle, so a stale tab cannot overwrite
+a newer identity. Reload profile settings resolves stale-tab feedback.
 
 Passing a normalized handle to the dashboard RPC returns only a published
 profile. A null handle returns only the authenticated caller's own profile,
 including unpublished profiles; anonymous callers receive no row. The owner
-dashboard UI, trends, activity, and race actions remain separate tickets.
+dashboard uses this private lookup. Trends, activity, and race actions remain
+separate tickets.
+
+Migration 0006 reserves `profile` for future handle claims through an insert/update
+trigger. Existing accounts using that handle keep their URL and publication
+controls. The trigger rejects changing another handle to `profile`; ordinary
+publication changes and unchanged handles remain allowed. Apply it before the
+owner workspace frontend. Migration 0005 remains required for owner aggregates.
 
 ## Verification — 2026-10-08
 
@@ -118,3 +128,35 @@ actionable heuristic findings. Standards findings: 0; no worst issue.
 Independent review against ticket 02: no code behavior mismatch or scope creep.
 One operational requirement remains: apply migration 0005 before enabling the
 frontend. Spec code findings: 0; pending deployment requirement: 1.
+
+## Ticket 03 verification — 2026-10-09
+
+Implemented the owner `/profile` workspace, shared ledger preview, separate
+private history under `#history`, and the account menu. Session restoration
+finishes before private-route redirects; authenticated `/stats` redirects to
+Profile and guest `/profile` redirects to Stats. Logout returns to typing.
+
+Lint and production build pass. This JavaScript project has no configured
+typecheck or automated test suite. No automated test tooling or dependencies
+were added to the repository.
+
+Temporary headless Chrome/CDP fixtures verified restored-session redirects,
+history anchor focus, menu Escape focus return and all destinations, conditional
+public links, logout, public navigation and browser back, handleless preview,
+initial publish, rename while published/private, unchanged handles, duplicate
+feedback, stale-tab rejection and settings reload, clipboard denial, unpublish/
+republish, aggregate failure isolated from local/cloud history, dashboard retry,
+generic not-found for old URLs, and owner/menu containment at 320px. Browser
+fixtures verify interactions rather than live Supabase authentication.
+
+Temporary PGlite checks exercised migrations 0001–0006: existing `profile`
+handles retain publication and unchanged-update access; new reserved claims
+fail with 23514; duplicates fail with 23505 without changing the row; rename
+replaces the public URL; expected-handle conditions reject stale writes; owner
+RLS blocks cross-account rename; private owner aggregates remain available;
+anonymous null-handle, unpublished, and raw-table access remain denied.
+
+Independent Standards and Spec reviews found two correctness issues and one
+duplication concern, all fixed and re-reviewed with no remaining findings.
+Migration 0006 has not been applied to live Supabase. Apply it before deployment
+and smoke-check real authentication and hosting fallbacks afterward.
