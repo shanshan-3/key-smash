@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -14,15 +14,19 @@ function storageAvailable() {
   }
 }
 
-export const loginStorageAvailable = !!supabaseUrl && !!supabaseKey && storageAvailable();
+export const loginStorageAvailable =
+  !!supabaseUrl && !!supabaseKey && storageAvailable();
 
-const codeCallback = globalThis.location?.pathname === '/auth/callback'
-  && new URLSearchParams(globalThis.location.search).has('code');
+const codeCallback =
+  globalThis.location?.pathname === "/auth/callback" &&
+  new URLSearchParams(globalThis.location.search).has("code");
 
 // Match incoming code callbacks so the SDK can exchange them during initialization.
-export const supabase = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey, { auth: { flowType: codeCallback ? 'pkce' : 'implicit' } })
-  : null;
+export const supabase =
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: { flowType: codeCallback ? "pkce" : "implicit" },
+      })
+    : null;
 
-
-export const callbackUrl = () => `${window.location.origin}/auth/callback`
+export const callbackUrl = () => `${window.location.origin}/auth/callback`;

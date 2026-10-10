@@ -6,42 +6,47 @@ import {
   useRef,
   useState,
 } from "react";
-import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import {
   buildRunPayload,
   canDelete,
   consistencyFromSamples,
   correctCount,
   pbKey,
-  rankMissed,
   sampleProgress,
   scoreRun,
   streamWords,
+  WORD_SET_VERSION,
 } from "./engine.js";
-import {
-  ghostOutcome,
-  ghostPace,
-  ghostPosition,
-  prepareGhost,
-} from "./ghosts.js";
-import { isRacePath, raceRequest } from "./raceRoutes.js";
-import { formatMode, loadPbs, saveRun } from "./history.js";
+import { ghostPosition, prepareGhost } from "./ghosts.js";
+import { pageForPath, raceRequest } from "./raceRoutes.js";
+import { loadPbs, saveRun } from "./history.js";
 import Stats from "./Stats.jsx";
 import PublicProfile from "./PublicProfile.jsx";
 import OwnerProfile from "./OwnerProfile.jsx";
-import AccountMenu from "./AccountMenu.jsx";
+import Masthead from "./Masthead.jsx";
+import AuthDialog from "./AuthDialog.jsx";
+import RunResults from "./RunResults.jsx";
+import useAuth from "./useAuth.js";
 import {
   loadOwnerGhost,
   loadOwnerProfile,
   loadPublicGhost,
 } from "./profiles.js";
-import PaceChart from "./PaceChart.jsx";
-import { callbackUrl, loginStorageAvailable, supabase } from "./supabase.js";
-import { customTarget, loadCustomSetup, prepareCustomText, saveCustomSetup } from "./customPractice.js";
+import { loginStorageAvailable, supabase } from "./supabase.js";
+import {
+  customTarget,
+  loadCustomSetup,
+  prepareCustomText,
+  saveCustomSetup,
+} from "./customPractice.js";
 
-const DURATIONS = [15, 30, 60, 120];
-const WORD_COUNTS = [25, 50, 60, 100];
-const WORDS_PER_PAGE = 20;
+import {
+  DURATIONS,
+  WORD_COUNTS,
+  WORDS_PER_PAGE,
+  CUSTOM_TEXT_LIMIT,
+} from "./practiceSettings.js";
+
 const idleRun = () => ({
   typed: "",
   presses: 0,
@@ -50,28 +55,21 @@ const idleRun = () => ({
   now: Date.now(),
   result: null,
 });
-const currentPage = () =>
-  isRacePath(window.location.pathname)
-    ? "race"
-    : window.location.pathname === "/profile"
-      ? "owner"
-      : window.location.pathname === "/stats"
-        ? "stats"
-        : window.location.pathname.startsWith("/u/")
-          ? "profile"
-          : "type";
-
 export default function App() {
   const [rememberedSetup] = useState(loadCustomSetup);
   const [duration, setDuration] = useState(60);
   const [wordCount, setWordCount] = useState(60);
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
-  const [wordSetVersion, setWordSetVersion] = useState(1);
+  const [wordSetVersion, setWordSetVersion] = useState(WORD_SET_VERSION);
   const [textSource, setTextSource] = useState("words");
   const [customDraft, setCustomDraft] = useState(rememberedSetup.text);
   const [customText, setCustomText] = useState(rememberedSetup.text);
-  const [customDuration, setCustomDuration] = useState(rememberedSetup.duration);
-  const [customSetupStatus, setCustomSetupStatus] = useState(rememberedSetup.warning);
+  const [customDuration, setCustomDuration] = useState(
+    rememberedSetup.duration,
+  );
+  const [customSetupStatus, setCustomSetupStatus] = useState(
+    rememberedSetup.warning,
+  );
   const [customError, setCustomError] = useState("");
   const standardWords = useMemo(
     () => streamWords(seed, wordCount, wordSetVersion),
@@ -88,39 +86,42 @@ export default function App() {
   const [localGhostUnavailable, setLocalGhostUnavailable] = useState(false);
   const [focused, setFocused] = useState(false);
   const [caret, setCaret] = useState(null);
-  const [user, setUser] = useState(null);
-  const [authOpen, setAuthOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [authMsg, setAuthMsg] = useState("");
-  const [authPending, setAuthPending] = useState(false);
-  const [authLoading, setAuthLoading] = useState(
-    () => !!supabase && window.location.pathname === "/auth/callback",
-  );
-  const [authRestoring, setAuthRestoring] = useState(!!supabase);
   const [ownerProfile, setOwnerProfile] = useState(null);
   const ownerProfileVersion = useRef(0);
   const [route, setRoute] = useState(
     () => window.location.pathname + window.location.hash,
   );
-  const [page, setPage] = useState(currentPage);
-  const request = raceRequest(route.split("#")[0]);
+  const path = route.split("#")[0];
+  const page = pageForPath(path);
+  const publicHandle = path.slice(3);
+  const onAuthCallback = useCallback(() => {
+    setRoute("/");
+  }, []);
+  const auth = useAuth(onAuthCallback);
+  const {
+    user,
+    setUser,
+    authOpen,
+    setAuthOpen,
+    setAuthMsg,
+    authLoading,
+    authRestoring,
+  } = auth;
+  const request = raceRequest(path);
   const publicRace = page === "race" && !request.owner;
   const raceAccount = publicRace ? null : user?.id;
   const raceAuthPending = !publicRace && (authRestoring || authLoading);
   const typingPage = page === "type" || page === "race";
   const custom = textSource === "custom" && page !== "race";
-  const target = custom ? customTarget(customText, run.typed.length, run.pageIndex) : standardWords.join(" ");
+  const target = custom
+    ? customTarget(customText, run.typed.length, run.pageIndex)
+    : standardWords.join(" ");
   const words = custom ? target.split(" ") : standardWords;
-  const [publicHandle, setPublicHandle] = useState(() =>
-    window.location.pathname.slice(3),
-  );
   const [freshRun, setFreshRun] = useState(0);
   const [saveStatus, setSaveStatus] = useState("");
   const inputRef = useRef(null);
   const cardRef = useRef(null);
   const resultRef = useRef(null);
-  const dialogRef = useRef(null);
-  const authTriggerRef = useRef(null);
   const totalPages = Math.ceil(words.length / WORDS_PER_PAGE);
   const pageStart =
     run.pageIndex === 0
@@ -141,7 +142,9 @@ export default function App() {
   });
   const active = run.startedAt !== null && !run.result;
   const pb = custom ? null : loadPbs()[pbKey(wordCount, duration)] || null;
-  const progress = custom ? (elapsed / duration) * 100 : Math.min(100, (run.typed.length / target.length) * 100);
+  const progress = custom
+    ? (elapsed / duration) * 100
+    : Math.min(100, (run.typed.length / target.length) * 100);
   const completedWords =
     run.result && run.typed.length === target.length
       ? wordCount
@@ -165,7 +168,7 @@ export default function App() {
     samplesRef.current = [];
     missedRef.current = {};
     setGhost(nextGhost);
-    setWordSetVersion(nextGhost?.word_set_version ?? 1);
+    setWordSetVersion(nextGhost?.word_set_version ?? WORD_SET_VERSION);
     setLocalGhostUnavailable(false);
     setSaveStatus("");
     setCaret(null);
@@ -191,23 +194,25 @@ export default function App() {
       keystrokes: presses,
     });
     const entry = {
-      ...(custom ? {
-        ...score,
-        mode: `custom-${duration}s`,
-        duration_s: duration,
-        missed_keys: { ...missedRef.current },
-        samples,
-        elapsed_s: seconds,
-      } : buildRunPayload({
-        ...score,
-        duration,
-        wordCount,
-        missed: { ...missedRef.current },
-        seed,
-        samples,
-        elapsed: seconds,
-        wordSetVersion,
-      })),
+      ...(custom
+        ? {
+            ...score,
+            mode: `custom-${duration}s`,
+            duration_s: duration,
+            missed_keys: { ...missedRef.current },
+            samples,
+            elapsed_s: seconds,
+          }
+        : buildRunPayload({
+            ...score,
+            duration,
+            wordCount,
+            missed: { ...missedRef.current },
+            seed,
+            samples,
+            elapsed: seconds,
+            wordSetVersion,
+          })),
       id: crypto.randomUUID(),
       created_at: new Date(at).toISOString(),
       raw: Math.round(presses / 5 / (seconds / 60)),
@@ -321,50 +326,13 @@ export default function App() {
 
   useEffect(() => {
     const onPop = () => {
-      setPage(currentPage());
       setRoute(window.location.pathname + window.location.hash);
-      setPublicHandle(window.location.pathname.slice(3));
     };
     window.addEventListener("popstate", onPop);
     window.addEventListener("hashchange", onPop);
     return () => {
       window.removeEventListener("popstate", onPop);
       window.removeEventListener("hashchange", onPop);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!supabase) return;
-    let mounted = true;
-    supabase.auth.getSession().then(
-      ({ data, error }) => {
-        if (!mounted) return;
-        setUser(data?.session?.user || null);
-        setAuthRestoring(false);
-        if (error) {
-          setAuthMsg("Could not restore your login. Check your connection and try again.");
-          setAuthOpen(true);
-        }
-      },
-      () => {
-        if (mounted) {
-          setAuthRestoring(false);
-          setAuthMsg(
-            "Could not connect to login. Typing still works on this device.",
-          );
-          setAuthOpen(true);
-        }
-      },
-    );
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (mounted) {
-        setUser(session?.user || null);
-        setAuthRestoring(false);
-      }
-    });
-    return () => {
-      mounted = false;
-      data.subscription.unsubscribe();
     };
   }, []);
 
@@ -415,7 +383,6 @@ export default function App() {
     if (redirect) {
       window.history.replaceState({}, "", redirect);
       setRoute(redirect);
-      setPage(currentPage());
       return;
     }
     const frame = requestAnimationFrame(() => {
@@ -433,7 +400,12 @@ export default function App() {
   useEffect(() => {
     if (page !== "race") {
       if (cloudRaceActive.current) {
-        reset(textSource === "custom" ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null);
+        reset(
+          textSource === "custom" ? customDuration : duration,
+          wordCount,
+          Math.floor(Math.random() * 1e9),
+          null,
+        );
         setRaceState({});
         cloudRaceActive.current = false;
       }
@@ -487,53 +459,6 @@ export default function App() {
   }, [page, route, raceAccount, raceAuthPending, raceRetry]);
 
   useEffect(() => {
-    if (!authLoading || !supabase) return;
-    let mounted = true;
-    const complete = (message) => {
-      if (!mounted) return;
-      window.history.replaceState({}, "", "/");
-      setPage("type");
-      setRoute("/");
-      setAuthLoading(false);
-      if (message) {
-        setAuthMsg(message);
-        setAuthOpen(true);
-      }
-    };
-    const failureMessage = (error) => isAuthRetryableFetchError(error)
-      ? "Login could not connect. Check your connection and try again."
-      : "Login was cancelled or the link expired. Try again.";
-    // Supabase consumes callback credentials during initialization, once per client.
-    supabase.auth.initialize().then(async ({ error }) => {
-      if (error) {
-        complete(failureMessage(error));
-        return;
-      }
-      const { data, error: sessionError } = await supabase.auth.getSession();
-      complete(
-        sessionError
-          ? failureMessage(sessionError)
-          : !data?.session ? "Login link expired. Request a new link."
-          : "",
-      );
-    }).catch(() => complete("Login failed. Check your connection and try again."));
-    return () => {
-      mounted = false;
-    };
-  }, [authLoading]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (authOpen && dialog && !dialog.open) {
-      authTriggerRef.current = document.activeElement;
-      dialog.showModal();
-    } else if (!authOpen && dialog?.open) {
-      dialog.close();
-      authTriggerRef.current?.focus?.();
-    }
-  }, [authOpen]);
-
-  useEffect(() => {
     function onKey(e) {
       if (
         !typingPage ||
@@ -576,16 +501,19 @@ export default function App() {
           : "/stats"
         : "/";
     if (path === "/")
-      reset(textSource === "custom" ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null);
+      reset(
+        textSource === "custom" ? customDuration : duration,
+        wordCount,
+        Math.floor(Math.random() * 1e9),
+        null,
+      );
     window.history.pushState({}, "", path);
-    setPage(currentPage());
     setRoute(path);
-    setPublicHandle(window.location.pathname.slice(3));
     setAuthOpen(false);
     requestAnimationFrame(() => {
       const heading = path.endsWith("#history")
         ? document.getElementById("history")
-        : document.querySelector("main h1") ?? inputRef.current;
+        : (document.querySelector("main h1") ?? inputRef.current);
       heading?.focus();
       if (!path.endsWith("#history")) window.scrollTo(0, 0);
     });
@@ -594,7 +522,9 @@ export default function App() {
   function acceptText(next) {
     const current = runRef.current;
     if (current.result || authOpen || (custom && !customText)) return;
-    const nextTarget = custom ? customTarget(customText, next.length, current.pageIndex) : target;
+    const nextTarget = custom
+      ? customTarget(customText, next.length, current.pageIndex)
+      : target;
     const nextWords = custom ? nextTarget.split(" ") : words;
     const at = Date.now();
     if (
@@ -641,7 +571,8 @@ export default function App() {
     while (
       pageIndex < Math.ceil(nextWords.length / WORDS_PER_PAGE) - 1 &&
       next.length >=
-        nextWords.slice(0, (pageIndex + 1) * WORDS_PER_PAGE).join(" ").length + 1
+        nextWords.slice(0, (pageIndex + 1) * WORDS_PER_PAGE).join(" ").length +
+          1
     )
       pageIndex++;
     const updated = {
@@ -653,7 +584,8 @@ export default function App() {
       pageIndex,
     };
     updateRun(updated);
-    if (!custom && next.length === target.length) finish(next, updated.presses, at);
+    if (!custom && next.length === target.length)
+      finish(next, updated.presses, at);
   }
 
   function applyCustomText() {
@@ -684,37 +616,6 @@ export default function App() {
       return;
     }
     reset(selected.duration_s, selected.word_count, selected.seed, selected);
-  }
-
-  async function login(kind) {
-    if (!supabase || authPending) return;
-    setAuthPending(true);
-    setAuthMsg("");
-    try {
-      const { error } =
-        kind === "google"
-          ? await supabase.auth.signInWithOAuth({
-              provider: "google",
-              options: { redirectTo: callbackUrl() },
-            })
-          : await supabase.auth.signInWithOtp({
-              email: email.trim(),
-              options: { emailRedirectTo: callbackUrl() },
-            });
-      setAuthMsg(
-        error
-          ? `Login failed: ${error.message}`
-          : kind === "email"
-            ? "Check your inbox for the login link."
-            : "Opening Google login...",
-      );
-    } catch {
-      setAuthMsg(
-        "Login could not connect. Check your connection and try again.",
-      );
-    } finally {
-      setAuthPending(false);
-    }
   }
 
   async function logout() {
@@ -769,52 +670,19 @@ export default function App() {
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <header className="masthead">
-        <button
-          className="wordmark"
-          onClick={() => navigate("type")}
-          aria-label="KEYSMASH home"
-        >
-          <img src="/favicon.png" alt="" width="40" height="40" />
-          KEYSMASH<span aria-hidden="true">.</span>
-        </button>
-        <nav aria-label="Main navigation">
-          <button
-            aria-current={page === "type" ? "page" : undefined}
-            onClick={() => navigate("type")}
-          >
-            Type
-          </button>
-          {user ? (
-            <AccountMenu
-              current={page === "owner"}
-              route={route}
-              profile={ownerProfile?.userId === user.id ? ownerProfile : null}
-              onNavigate={navigate}
-              onLogout={logout}
-            />
-          ) : (
-            <>
-              <button
-                aria-current={page === "stats" ? "page" : undefined}
-                onClick={() => navigate("stats")}
-              >
-                Stats
-              </button>
-              {supabase && (
-                <button
-                  onClick={() => {
-                    setAuthMsg("");
-                    setAuthOpen(true);
-                  }}
-                >
-                  Log in
-                </button>
-              )}
-            </>
-          )}
-        </nav>
-      </header>
+      <Masthead
+        page={page}
+        route={route}
+        user={user}
+        profile={ownerProfile?.userId === user?.id ? ownerProfile : null}
+        loginAvailable={!!supabase}
+        onNavigate={navigate}
+        onLogin={() => {
+          setAuthMsg("");
+          setAuthOpen(true);
+        }}
+        onLogout={logout}
+      />
       <main id="main" className="app-main" tabIndex={-1}>
         {page === "owner" ? (
           <OwnerProfile
@@ -901,15 +769,30 @@ export default function App() {
                   </div>
                 )}
                 <div className="test-settings">
-                  {!ghost && page !== "race" && <fieldset>
-                    <legend>Text source</legend>
-                    <div className="segmented">
-                      {["words", "custom"].map((source) => <button key={source} aria-pressed={textSource === source} onClick={() => {
-                        setTextSource(source);
-                        reset(source === "custom" ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null);
-                      }}>{source === "custom" ? "Custom" : "Words"}</button>)}
-                    </div>
-                  </fieldset>}
+                  {!ghost && page !== "race" && (
+                    <fieldset>
+                      <legend>Text source</legend>
+                      <div className="segmented">
+                        {["words", "custom"].map((source) => (
+                          <button
+                            key={source}
+                            aria-pressed={textSource === source}
+                            onClick={() => {
+                              setTextSource(source);
+                              reset(
+                                source === "custom" ? customDuration : duration,
+                                wordCount,
+                                Math.floor(Math.random() * 1e9),
+                                null,
+                              );
+                            }}
+                          >
+                            {source === "custom" ? "Custom" : "Words"}
+                          </button>
+                        ))}
+                      </div>
+                    </fieldset>
+                  )}
                   <fieldset disabled={(active && !custom) || !!ghost}>
                     <legend>Time limit</legend>
                     <div className="segmented">
@@ -920,7 +803,9 @@ export default function App() {
                           onClick={() => {
                             if (custom) {
                               setCustomDuration(d);
-                              setCustomSetupStatus(saveCustomSetup(customText, d));
+                              setCustomSetupStatus(
+                                saveCustomSetup(customText, d),
+                              );
                             }
                             reset(
                               d,
@@ -936,44 +821,70 @@ export default function App() {
                       ))}
                     </div>
                   </fieldset>
-                  {!custom && <fieldset disabled={active || !!ghost}>
-                    <legend>Word count</legend>
-                    <div className="segmented">
-                      {WORD_COUNTS.map((count) => (
-                        <button
-                          key={count}
-                          aria-pressed={count === wordCount}
-                          onClick={() =>
-                            reset(
-                              duration,
-                              count,
-                              Math.floor(Math.random() * 1e9),
-                              null,
-                            )
-                          }
-                        >
-                          {count}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>}
+                  {!custom && (
+                    <fieldset disabled={active || !!ghost}>
+                      <legend>Word count</legend>
+                      <div className="segmented">
+                        {WORD_COUNTS.map((count) => (
+                          <button
+                            key={count}
+                            aria-pressed={count === wordCount}
+                            onClick={() =>
+                              reset(
+                                duration,
+                                count,
+                                Math.floor(Math.random() * 1e9),
+                                null,
+                              )
+                            }
+                          >
+                            {count}
+                          </button>
+                        ))}
+                      </div>
+                    </fieldset>
+                  )}
                   <p className="settings-note">
-                    {custom ? "Custom practice repeats until the timer ends. Scores stay on this device." : ghost
-                      ? "Race text and settings are locked."
-                      : active
-                        ? "Finish or restart to change modes."
-                        : "Finish the words or run out the clock."}
+                    {custom
+                      ? "Custom practice repeats until the timer ends. Scores stay on this device."
+                      : ghost
+                        ? "Race text and settings are locked."
+                        : active
+                          ? "Finish or restart to change modes."
+                          : "Finish the words or run out the clock."}
                   </p>
                 </div>
-                {custom && <div className="custom-editor">
-                  <label htmlFor="custom-text">Your practice text</label>
-                  <textarea id="custom-text" value={customDraft} onChange={(e) => setCustomDraft(e.target.value)} aria-describedby="custom-text-help custom-text-count" aria-invalid={!!customError} />
-                  <p id="custom-text-help">Up to 2,000 entered characters, including whitespace. Emoji may count as two characters (UTF-16). Applying text trims and joins whitespace into single spaces.</p>
-                  <p id="custom-text-count">{customDraft.length.toLocaleString()} / 2,000 characters</p>
-                  {customError && <p role="alert">{customError}</p>}
-                  <p role="status" aria-live="polite">{customSetupStatus}</p>
-                  <button className="brutal-btn primary" onClick={applyCustomText}>Use this text</button>
-                </div>}
+                {custom && (
+                  <div className="custom-editor">
+                    <label htmlFor="custom-text">Your practice text</label>
+                    <textarea
+                      id="custom-text"
+                      value={customDraft}
+                      onChange={(e) => setCustomDraft(e.target.value)}
+                      aria-describedby="custom-text-help custom-text-count"
+                      aria-invalid={!!customError}
+                    />
+                    <p id="custom-text-help">
+                      Up to 2,000 entered characters, including whitespace.
+                      Emoji may count as two characters (UTF-16). Applying text
+                      trims and joins whitespace into single spaces.
+                    </p>
+                    <p id="custom-text-count">
+                      {customDraft.length.toLocaleString()} /{" "}
+                      {CUSTOM_TEXT_LIMIT.toLocaleString()} characters
+                    </p>
+                    {customError && <p role="alert">{customError}</p>}
+                    <p role="status" aria-live="polite">
+                      {customSetupStatus}
+                    </p>
+                    <button
+                      className="brutal-btn primary"
+                      onClick={applyCustomText}
+                    >
+                      Use this text
+                    </button>
+                  </div>
+                )}
                 {!result && (
                   <div className="live-strip">
                     <div className="clock">
@@ -997,10 +908,12 @@ export default function App() {
                     </dl>
                     <div className="page-position">
                       <span>
-                        Page {run.pageIndex + 1}{!custom && ` / ${totalPages}`}
+                        Page {run.pageIndex + 1}
+                        {!custom && ` / ${totalPages}`}
                       </span>
                       <strong>
-                        {completedWords}{!custom && ` / ${wordCount}`} words
+                        {completedWords}
+                        {!custom && ` / ${wordCount}`} words
                       </strong>
                     </div>
                   </div>
@@ -1023,7 +936,9 @@ export default function App() {
                           this page.
                         </p>
                       )}
-                      {custom && !customText && <p>Add text above, then choose Use this text.</p>}
+                      {custom && !customText && (
+                        <p>Add text above, then choose Use this text.</p>
+                      )}
                       {pageWords.map((word, wi) => {
                         const offset = charOffset;
                         charOffset += word.length + 1;
@@ -1039,7 +954,10 @@ export default function App() {
                             ].map((ch) => {
                               const index = characterOffset;
                               characterOffset += ch.length;
-                              const typed = run.typed.length <= index ? undefined : run.typed.slice(index, index + ch.length);
+                              const typed =
+                                run.typed.length <= index
+                                  ? undefined
+                                  : run.typed.slice(index, index + ch.length);
                               return (
                                 <span
                                   key={index}
@@ -1096,7 +1014,13 @@ export default function App() {
                         if (e.key === "Escape") {
                           e.preventDefault();
                           inputRef.current.blur();
-                          document.querySelector("nav button")?.focus();
+                          document
+                            .querySelector(
+                              window.matchMedia("(max-width: 767px)").matches
+                                ? ".mobile-menu-toggle"
+                                : ".desktop-navigation button",
+                            )
+                            ?.focus();
                         }
                         if (
                           [
@@ -1137,7 +1061,11 @@ export default function App() {
                     />
                     {!focused && (
                       <div className="focus-cover" aria-hidden="true">
-                        <span>{custom && !customText ? "Apply your text to begin" : "Click here or press a key to type"}</span>
+                        <span>
+                          {custom && !customText
+                            ? "Apply your text to begin"
+                            : "Click here or press a key to type"}
+                        </span>
                       </div>
                     )}
                     {focused && caret && (
@@ -1176,7 +1104,12 @@ export default function App() {
                     </button>
                   </div>
                   <div className="ghost-row">
-                    {custom ? <p className="muted">Custom practice does not count toward personal bests or ghosts.</p> : ghost ? (
+                    {custom ? (
+                      <p className="muted">
+                        Custom practice does not count toward personal bests or
+                        ghosts.
+                      </p>
+                    ) : ghost ? (
                       <>
                         <p>
                           Target: <strong>{ghost.wpm} WPM</strong>.{" "}
@@ -1216,149 +1149,19 @@ export default function App() {
                   )}
                 </div>
               ) : (
-                <section
-                  className="results"
+                <RunResults
                   ref={resultRef}
-                  tabIndex={-1}
-                  aria-label="Test results"
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === "Tab" &&
-                      !e.shiftKey &&
-                      e.target === e.currentTarget
-                    ) {
-                      e.preventDefault();
-                      reset();
-                    }
-                  }}
-                >
-                  <div className="result-heading">
-                    <h2>That's your run.</h2>
-                    {result.isBest && (
-                      <span className="best-stamp">New personal best</span>
-                    )}
-                  </div>
-                  {ghost && (
-                    <div className="ghost-result">
-                      <h3>{ghostOutcome(result, ghost)}</h3>
-                      <p>
-                        {challengedHandle && `Challenged ${challengedHandle}. `}
-                        Your {result.wpm} WPM / {result.acc}% accuracy versus
-                        ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.
-                      </p>
-                      <p>
-                        {result.wpm - ghost.wpm >= 0 ? "+" : ""}
-                        {result.wpm - ghost.wpm} WPM /{" "}
-                        {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0
-                          ? "+"
-                          : ""}
-                        {Number((result.acc - ghost.accuracy).toFixed(1))}{" "}
-                        accuracy points
-                      </p>
-                    </div>
-                  )}
-                  <div className="result-hero">
-                    <div>
-                      <span className="metric-label">Words per minute</span>
-                      <strong>{result.wpm}</strong>
-                    </div>
-                    <div>
-                      <span className="metric-label">Accuracy</span>
-                      <strong>
-                        {result.acc}
-                        <small>%</small>
-                      </strong>
-                    </div>
-                  </div>
-                  <PaceChart
-                    samples={result.samples}
-                    comparison={
-                      ghost ? ghostPace(ghost) : result.previous?.samples || []
-                    }
-                    comparisonLabel={
-                      ghost ? "Challenged ghost" : "Previous best"
-                    }
-                  />
-                  {!custom && !ghost && !result.previous?.samples?.length && (
-                    <p className="comparison-note">
-                      {result.previous
-                        ? "Your earlier best has no pace samples. Future bests will include a comparison curve."
-                        : "First recorded run in this mode. Your next run can compare against this curve."}
-                    </p>
-                  )}
-                  <dl className="result-details">
-                    <div>
-                      <dt>Raw WPM</dt>
-                      <dd>{result.raw}</dd>
-                    </div>
-                    <div>
-                      <dt>Net WPM</dt>
-                      <dd>{result.wpm}</dd>
-                    </div>
-                    <div>
-                      <dt>Consistency</dt>
-                      <dd>{result.consistency}%</dd>
-                    </div>
-                    <div>
-                      <dt>Elapsed</dt>
-                      <dd>{Number(result.elapsed_s.toFixed(2))}s</dd>
-                    </div>
-                  </dl>
-                  <div className="missed-keys">
-                    <h3>Missed keys</h3>
-                    {rankMissed(result.missed_keys).length ? (
-                      <ul>
-                        {rankMissed(result.missed_keys).map(([key, count]) => (
-                          <li key={key}>
-                            <kbd>{key}</kbd>
-                            <span>
-                              {count} {count === 1 ? "miss" : "misses"}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p>No missed keys in this run.</p>
-                    )}
-                  </div>
-                  <div className="result-actions">
-                    <button
-                      className="brutal-btn primary"
-                      onClick={() => reset()}
-                    >
-                      {ghost ? "Rematch" : "Type again"} <kbd>Tab</kbd>
-                    </button>
-                    {!ghost && pb && (
-                      <button className="brutal-btn" onClick={rematch}>
-                        Race your best
-                      </button>
-                    )}
-                    {ghost && (
-                      <button
-                        className="brutal-btn"
-                        onClick={() => navigate("type")}
-                      >
-                        Leave race
-                      </button>
-                    )}
-                    <button
-                      className="text-button"
-                      onClick={() => navigate("stats")}
-                    >
-                      View history
-                    </button>
-                  </div>
-                  <div className="result-meta">
-                    <span>{formatMode(result.mode)}</span>
-                    {ghost && (
-                      <span>
-                        {result.wpm - ghost.wpm >= 0 ? "+" : ""}
-                        {result.wpm - ghost.wpm} WPM vs ghost
-                      </span>
-                    )}
-                    <p role="status">{saveStatus}</p>
-                  </div>
-                </section>
+                  result={result}
+                  ghost={ghost}
+                  challengedHandle={challengedHandle}
+                  custom={custom}
+                  pb={pb}
+                  saveStatus={saveStatus}
+                  onRestart={() => reset()}
+                  onRematch={rematch}
+                  onBack={() => navigate("type")}
+                  onHistory={() => navigate("stats")}
+                />
               )}
             </div>
           </>
@@ -1372,69 +1175,7 @@ export default function App() {
             : "No account needed. Just a keyboard."}
         </span>
       </footer>
-      {supabase && (
-        <dialog
-          ref={dialogRef}
-          className="auth-dialog"
-          aria-labelledby="auth-heading"
-          onCancel={() => setAuthOpen(false)}
-          onClick={(e) => {
-            if (e.target === dialogRef.current) {
-              const r = e.target.getBoundingClientRect();
-              if (
-                e.clientX < r.left ||
-                e.clientX > r.right ||
-                e.clientY < r.top ||
-                e.clientY > r.bottom
-              )
-                setAuthOpen(false);
-            }
-          }}
-        >
-          <div className="section-heading">
-            <h2 id="auth-heading">Save your pace.</h2>
-            <button className="text-button" onClick={() => setAuthOpen(false)}>
-              Close
-            </button>
-          </div>
-          <p>
-            Log in for cloud history. Your tests always work without an account.
-          </p>
-          {!loginStorageAvailable && (
-            <p role="status">
-              This browser cannot remember your login. You can sign in for this visit.
-            </p>
-          )}
-          <button
-            className="brutal-btn"
-            disabled={authPending}
-            onClick={() => login("google")}
-          >
-            Continue with Google
-          </button>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              login("email");
-            }}
-          >
-            <label htmlFor="login-email">Email address</label>
-            <input
-              id="login-email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              autoComplete="email"
-            />
-            <button className="brutal-btn primary" disabled={authPending}>
-              {authPending ? "Connecting..." : "Send login link"}
-            </button>
-          </form>
-          {authMsg && <p role="status">{authMsg}</p>}
-        </dialog>
-      )}
+      {supabase && <AuthDialog {...auth} />}
     </div>
   );
 }

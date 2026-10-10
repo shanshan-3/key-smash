@@ -1,87 +1,114 @@
-const WORDS_V1 = (
-  'the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is are had has were been was will would can should may might must shall do does did have has had will would there here where when what which who whom whose that this these those then than that with from into over after before between through during under again once here there when where why how all any both each few more most other some such no nor not only own same so than too very can will just don should now'
-).split(' ')
-export const WORDS = WORDS_V1
-export const WORD_SET_VERSION = 1
+const WORDS_V1 =
+  "the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is are had has were been was will would can should may might must shall do does did have has had will would there here where when what which who whom whose that this these those then than that with from into over after before between through during under again once here there when where why how all any both each few more most other some such no nor not only own same so than too very can will just don should now".split(
+    " ",
+  );
+export const WORD_SET_VERSION = 1;
 
 function mulberry32(seed) {
-  let t = seed >>> 0
+  let t = seed >>> 0;
   return () => {
-    t += 0x6d2b79f5
-    let z = Math.imul(t ^ (t >>> 15), t | 1)
-    z ^= z + Math.imul(z ^ (z >>> 7), z | 61)
-    return ((z ^ (z >>> 14)) >>> 0) / 4294967296
-  }
+    t += 0x6d2b79f5;
+    let z = Math.imul(t ^ (t >>> 15), t | 1);
+    z ^= z + Math.imul(z ^ (z >>> 7), z | 61);
+    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 export function streamWords(seed, count, version = WORD_SET_VERSION) {
-  if (version !== 1) throw new Error('Unsupported word set')
-  const rand = mulberry32(seed)
-  return Array.from({ length: count }, () => WORDS_V1[Math.floor(rand() * WORDS_V1.length)])
+  if (version !== 1) throw new Error("Unsupported word set");
+  const rand = mulberry32(seed);
+  return Array.from(
+    { length: count },
+    () => WORDS_V1[Math.floor(rand() * WORDS_V1.length)],
+  );
 }
 
 export function scoreRun({ correctChars, keystrokes, seconds }) {
-  const minutes = seconds / 60
-  const wpm = minutes > 0 ? Math.round(correctChars / 5 / minutes) : 0
-  const acc = keystrokes === 0 ? 100 : Math.round((correctChars / keystrokes) * 1000) / 10
-  return { wpm, acc }
+  const minutes = seconds / 60;
+  const wpm = minutes > 0 ? Math.round(correctChars / 5 / minutes) : 0;
+  const acc =
+    keystrokes === 0
+      ? 100
+      : Math.round((correctChars / keystrokes) * 1000) / 10;
+  return { wpm, acc };
 }
 
-// ponytail: typed-string model only, per-key timestamps if latency heatmap ever matters
 export function canDelete({ cursor, pageStart }) {
-  return cursor >= pageStart
+  return cursor >= pageStart;
 }
 
-// ponytail: O(n) rescan, per-word diff if N grows past ~500 words
 export function correctCount(target, typed) {
-  let n = 0
-  for (let i = 0; i < typed.length; i++) if (typed[i] === target[i]) n++
-  return n
+  let n = 0;
+  for (let i = 0; i < typed.length; i++) if (typed[i] === target[i]) n++;
+  return n;
 }
 
 export function perSecondWpm({ correctDelta, keyDelta, seconds = 1 }) {
   return {
-    net: seconds > 0 ? Math.round((Math.max(0, correctDelta) / 5) * 60 / seconds) : 0,
-    raw: seconds > 0 ? Math.round((Math.max(0, keyDelta) / 5) * 60 / seconds) : 0,
-  }
+    net:
+      seconds > 0
+        ? Math.round(((Math.max(0, correctDelta) / 5) * 60) / seconds)
+        : 0,
+    raw:
+      seconds > 0
+        ? Math.round(((Math.max(0, keyDelta) / 5) * 60) / seconds)
+        : 0,
+  };
 }
 
 export function sampleProgress(samples, { seconds, correctChars, keystrokes }) {
-  const previous = samples.at(-1) || { second: 0, correctChars: 0, keystrokes: 0 }
-  if (seconds <= previous.second) return samples
-  return [...samples, {
-    second: seconds,
-    correctChars,
-    keystrokes,
-    ...perSecondWpm({
-      correctDelta: correctChars - previous.correctChars,
-      keyDelta: keystrokes - previous.keystrokes,
-      seconds: seconds - previous.second,
-    }),
-  }]
+  const previous = samples.at(-1) || {
+    second: 0,
+    correctChars: 0,
+    keystrokes: 0,
+  };
+  if (seconds <= previous.second) return samples;
+  return [
+    ...samples,
+    {
+      second: seconds,
+      correctChars,
+      keystrokes,
+      ...perSecondWpm({
+        correctDelta: correctChars - previous.correctChars,
+        keyDelta: keystrokes - previous.keystrokes,
+        seconds: seconds - previous.second,
+      }),
+    },
+  ];
 }
 
 export function consistencyFromSamples(samples) {
-  if (samples.length < 2) return 100
-  const mean = samples.reduce((a, b) => a + b, 0) / samples.length
-  if (mean <= 0) return 0
-  const variance = samples.reduce((a, b) => a + (b - mean) * (b - mean), 0) / samples.length
-  return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.sqrt(variance) / mean))))
+  if (samples.length < 2) return 100;
+  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+  if (mean <= 0) return 0;
+  const variance =
+    samples.reduce((a, b) => a + (b - mean) * (b - mean), 0) / samples.length;
+  return Math.max(
+    0,
+    Math.min(100, Math.round(100 * (1 - Math.sqrt(variance) / mean))),
+  );
 }
 
-export function ghostIndex({ wpm, seconds }) {
-  if (wpm <= 0 || seconds <= 0) return 0
-  return Math.floor((wpm * 5 * seconds) / 60)
-}
+export const pbKey = (n, secs) => `time-${n}w-${secs}s`;
 
-export const pbKey = (n, secs) => `time-${n}w-${secs}s`
-
-// ponytail: O(k log k) sort, heap if missed keys ever grow past ~100
 export function rankMissed(missed, limit = 12) {
-  return Object.entries(missed).sort((a, b) => b[1] - a[1]).slice(0, limit)
+  return Object.entries(missed)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit);
 }
 
-export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, samples = [], elapsed = duration, wordSetVersion = WORD_SET_VERSION }) {
+export function buildRunPayload({
+  wpm,
+  acc,
+  duration,
+  wordCount,
+  missed,
+  seed,
+  samples = [],
+  elapsed = duration,
+  wordSetVersion = WORD_SET_VERSION,
+}) {
   return {
     wpm,
     acc,
@@ -93,5 +120,5 @@ export function buildRunPayload({ wpm, acc, duration, wordCount, missed, seed, s
     word_set_version: wordSetVersion,
     samples,
     elapsed_s: elapsed,
-  }
+  };
 }
