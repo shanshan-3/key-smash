@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { buildRunPayload, canDelete, consistencyFromSamples, correctCount, pbKey, rankMissed, sampleProgress, scoreRun, streamWords } from './engine.js'
 import { ghostOutcome, ghostPace, ghostPosition, prepareGhost } from './ghosts.js'
 import { isRacePath, raceRequest } from './raceRoutes.js'
@@ -9,7 +10,7 @@ import OwnerProfile from './OwnerProfile.jsx'
 import AccountMenu from './AccountMenu.jsx'
 import { loadOwnerGhost, loadOwnerProfile, loadPublicGhost } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
-import { callbackUrl, supabase } from './supabase.js'
+import { callbackUrl, loginStorageAvailable, supabase } from './supabase.js'
 
 const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
@@ -173,8 +174,11 @@ export default function App() {
       if (!mounted) return
       setUser(data?.session?.user || null)
       setAuthRestoring(false)
-      if (error) setAuthMsg('Could not restore your login. Try logging in again.')
-    }, () => { if (mounted) { setAuthRestoring(false); setAuthMsg('Could not connect to login. Typing still works on this device.') } })
+      if (error) {
+        setAuthMsg('Could not restore your login. Check your connection and try again.')
+        setAuthOpen(true)
+      }
+    }, () => { if (mounted) { setAuthRestoring(false); setAuthMsg('Could not connect to login. Typing still works on this device.'); setAuthOpen(true) } })
     const { data } = supabase.auth.onAuthStateChange((_event, session) => { if (mounted) { setUser(session?.user || null); setAuthRestoring(false) } })
     return () => { mounted = false; data.subscription.unsubscribe() }
   }, [])
@@ -245,8 +249,6 @@ export default function App() {
   useEffect(() => {
     if (!authLoading || !supabase) return
     let mounted = true
-    const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
     const complete = (message) => {
       if (!mounted) return
       window.history.replaceState({}, '', '/')
@@ -255,8 +257,20 @@ export default function App() {
       setAuthLoading(false)
       if (message) { setAuthMsg(message); setAuthOpen(true) }
     }
-    if (code) supabase.auth.exchangeCodeForSession(code).then(({ error }) => complete(error ? 'Login link expired. Request a new link.' : ''), () => complete('Login failed. Check your connection and try again.'))
-    else complete(params.has('error') ? 'Login was cancelled or the link expired. Try again.' : '')
+    const failureMessage = (error) => isAuthRetryableFetchError(error)
+      ? 'Login could not connect. Check your connection and try again.'
+      : 'Login was cancelled or the link expired. Try again.'
+    // Supabase consumes callback credentials during initialization, once per client.
+    supabase.auth.initialize().then(async ({ error }) => {
+      if (error) {
+        complete(failureMessage(error))
+        return
+      }
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      complete(sessionError
+        ? failureMessage(sessionError)
+        : !data?.session ? 'Login link expired. Request a new link.' : '')
+    }).catch(() => complete('Login failed. Check your connection and try again.'))
     return () => { mounted = false }
   }, [authLoading])
 
@@ -426,10 +440,11 @@ export default function App() {
           </div>
         </>}
       </main>
-      <footer className="app-footer"><span>KEYSMASH / A typing test.</span><span>{user ? `Signed in as ${user.email}` : 'No account needed. Just a keyboard.'}</span></footer>
+      <footer className="app-footer"><span>KEYSMASH / A typing test.</span><span>{user ? `Signed in as ${user.email}${loginStorageAvailable ? '' : ' (this visit only)'}` : 'No account needed. Just a keyboard.'}</span></footer>
       {supabase && <dialog ref={dialogRef} className="auth-dialog" aria-labelledby="auth-heading" onCancel={() => setAuthOpen(false)} onClick={(e) => { if (e.target === dialogRef.current) { const r = e.target.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) setAuthOpen(false) } }}>
         <div className="section-heading"><h2 id="auth-heading">Save your pace.</h2><button className="text-button" onClick={() => setAuthOpen(false)}>Close</button></div>
         <p>Log in for cloud history. Your tests always work without an account.</p>
+        {!loginStorageAvailable && <p role="status">This browser cannot remember your login. You can sign in for this visit.</p>}
         <button className="brutal-btn" disabled={authPending} onClick={() => login('google')}>Continue with Google</button>
         <form onSubmit={(e) => { e.preventDefault(); login('email') }}><label htmlFor="login-email">Email address</label><input id="login-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" /><button className="brutal-btn primary" disabled={authPending}>{authPending ? 'Connecting...' : 'Send login link'}</button></form>
         {authMsg && <p role="status">{authMsg}</p>}
