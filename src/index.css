@@ -332,3 +332,11 @@ th:first-child, td:first-child { padding-left: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
+/* The passage editor is separate from the hidden typing input. */
+.custom-editor { display: grid; gap: 12px; padding: 20px; min-width: 0; border-top: 3px solid var(--ink); }
+.custom-editor label { font-weight: 700; }
+.custom-editor textarea { display: block; width: 100%; min-width: 0; min-height: 140px; padding: 12px; border: 3px solid #111; border-radius: 0; background: #fff; color: #111; font: inherit; resize: vertical; }
+.custom-editor textarea:focus-visible { outline: 3px solid #111; outline-offset: 3px; }
+.custom-editor p { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.custom-editor button { justify-self: start; min-height: 44px; }
+.typing-word { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -11,6 +11,7 @@ import AccountMenu from './AccountMenu.jsx'
 import { loadOwnerGhost, loadOwnerProfile, loadPublicGhost } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, loginStorageAvailable, supabase } from './supabase.js'
+import { customTarget, prepareCustomText } from './customPractice.js'
 
 const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
@@ -23,8 +24,11 @@ export default function App() {
   const [wordCount, setWordCount] = useState(60)
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
   const [wordSetVersion, setWordSetVersion] = useState(1)
-  const words = useMemo(() => streamWords(seed, wordCount, wordSetVersion), [seed, wordCount, wordSetVersion])
-  const target = words.join(' ')
+  const [textSource, setTextSource] = useState('words')
+  const [customDraft, setCustomDraft] = useState('')
+  const [customText, setCustomText] = useState('')
+  const [customError, setCustomError] = useState('')
+  const standardWords = useMemo(() => streamWords(seed, wordCount, wordSetVersion), [seed, wordCount, wordSetVersion])
   const [run, setRun] = useState(idleRun)
   const runRef = useRef(run)
   const samplesRef = useRef([])
@@ -52,6 +56,9 @@ export default function App() {
   const raceAccount = publicRace ? null : user?.id
   const raceAuthPending = !publicRace && (authRestoring || authLoading)
   const typingPage = page === 'type' || page === 'race'
+  const custom = textSource === 'custom' && page !== 'race'
+  const target = custom ? customTarget(customText, run.typed.length, run.pageIndex) : standardWords.join(' ')
+  const words = custom ? target.split(' ') : standardWords
   const [publicHandle, setPublicHandle] = useState(() => window.location.pathname.slice(3))
   const [freshRun, setFreshRun] = useState(0)
   const [saveStatus, setSaveStatus] = useState('')
@@ -60,14 +67,14 @@ export default function App() {
   const resultRef = useRef(null)
   const dialogRef = useRef(null)
   const authTriggerRef = useRef(null)
-  const totalPages = Math.ceil(wordCount / WORDS_PER_PAGE)
+  const totalPages = Math.ceil(words.length / WORDS_PER_PAGE)
   const pageStart = run.pageIndex === 0 ? 0 : words.slice(0, run.pageIndex * WORDS_PER_PAGE).join(' ').length + 1
   const pageWords = words.slice(run.pageIndex * WORDS_PER_PAGE, (run.pageIndex + 1) * WORDS_PER_PAGE)
   const elapsed = run.startedAt === null ? 0 : Math.min(duration, (run.now - run.startedAt) / 1000)
   const live = scoreRun({ correctChars: correctCount(target, run.typed), keystrokes: run.presses, seconds: Math.max(elapsed, 0.5) })
   const active = run.startedAt !== null && !run.result
-  const pb = loadPbs()[pbKey(wordCount, duration)] || null
-  const progress = Math.min(100, run.typed.length / target.length * 100)
+  const pb = custom ? null : loadPbs()[pbKey(wordCount, duration)] || null
+  const progress = custom ? (elapsed / duration) * 100 : Math.min(100, run.typed.length / target.length * 100)
   const completedWords = run.result && run.typed.length === target.length ? wordCount : (run.typed.match(/ /g) || []).length
 
   function updateRun(next) {
@@ -90,34 +97,94 @@ export default function App() {
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
-  function finish(typed = runRef.current.typed, presses = runRef.current.presses, at = Date.now()) {
-    const current = runRef.current
-    if (current.result || current.startedAt === null) return
-    const seconds = Math.max(0.001, Math.min(duration, (at - current.startedAt) / 1000))
-    const correctChars = correctCount(target, typed)
-    const score = scoreRun({ correctChars, keystrokes: presses, seconds })
-    const samples = sampleProgress(samplesRef.current, { seconds, correctChars, keystrokes: presses })
+  function finish(
+    typed = runRef.current.typed,
+    presses = runRef.current.presses,
+    at = Date.now(),
+  ) {
+    const current = runRef.current;
+    if (current.result || current.startedAt === null) return;
+    const seconds = Math.max(
+      0.001,
+      Math.min(duration, (at - current.startedAt) / 1000),
+    );
+    const correctChars = correctCount(target, typed);
+    const score = scoreRun({ correctChars, keystrokes: presses, seconds });
+    const samples = sampleProgress(samplesRef.current, {
+      seconds,
+      correctChars,
+      keystrokes: presses,
+    });
     const entry = {
-      ...buildRunPayload({ ...score, duration, wordCount, missed: { ...missedRef.current }, seed, samples, elapsed: seconds, wordSetVersion }),
+      ...(custom ? {
+        ...score,
+        mode: `custom-${duration}s`,
+        duration_s: duration,
+        missed_keys: { ...missedRef.current },
+        samples,
+        elapsed_s: seconds,
+      } : buildRunPayload({
+        ...score,
+        duration,
+        wordCount,
+        missed: { ...missedRef.current },
+        seed,
+        samples,
+        elapsed: seconds,
+        wordSetVersion,
+      })),
       id: crypto.randomUUID(),
       created_at: new Date(at).toISOString(),
       raw: Math.round(presses / 5 / (seconds / 60)),
       consistency: consistencyFromSamples(samples.map((sample) => sample.net)),
-    }
-    const saved = saveRun(entry)
-    updateRun({ ...current, typed, presses, now: current.startedAt + seconds * 1000, result: { ...entry, ...saved } })
-    setFreshRun((n) => n + 1)
-    setSaveStatus(saved.persisted ? 'Saved on this device.' : 'Browser storage is unavailable. This run is kept for this session only.')
-    if (supabase && user) {
-      const localStatus = saved.persisted ? 'Saved on this device.' : 'Kept for this session only.'
-      const { id: _id, created_at: _date, raw: _raw, consistency: _consistency, ...payload } = entry
-      setSaveStatus(`${localStatus} Saving to cloud...`)
-      supabase.from('results').insert({ ...payload, user_id: user.id }).abortSignal(AbortSignal.timeout(10000)).then(({ error }) => {
-        if (runRef.current.result?.id === entry.id) setSaveStatus(error ? `${localStatus} Cloud save failed. Check your connection and database setup.` : `${localStatus} Cloud copy saved.`)
-        if (!error) setFreshRun((n) => n + 1)
-      }, () => {
-        if (runRef.current.result?.id === entry.id) setSaveStatus(`${localStatus} Cloud save failed. Check your connection.`)
-      })
+    };
+    const saved = saveRun(entry);
+    updateRun({
+      ...current,
+      typed,
+      presses,
+      now: current.startedAt + seconds * 1000,
+      result: { ...entry, ...saved },
+    });
+    setFreshRun((n) => n + 1);
+    setSaveStatus(
+      saved.persisted
+        ? "Saved on this device."
+        : "Browser storage is unavailable. This run is kept for this session only.",
+    );
+    if (!custom && supabase && user) {
+      const localStatus = saved.persisted
+        ? "Saved on this device."
+        : "Kept for this session only.";
+      const {
+        id: _id,
+        created_at: _date,
+        raw: _raw,
+        consistency: _consistency,
+        ...payload
+      } = entry;
+      setSaveStatus(`${localStatus} Saving to cloud...`);
+      supabase
+        .from("results")
+        .insert({ ...payload, user_id: user.id })
+        .abortSignal(AbortSignal.timeout(10000))
+        .then(
+          ({ error }) => {
+            if (runRef.current.result?.id === entry.id)
+              setSaveStatus(
+                error
+                  ? `${localStatus} Cloud save failed. Check your connection and database setup.`
+                  : `${localStatus} Cloud copy saved.`,
+              );
+            if (!error) setFreshRun((n) => n + 1);
+          },
+          () => {
+            if (runRef.current.result?.id === entry.id)
+              setSaveStatus(
+                `${localStatus} Cloud save failed. Check your connection.`,
+              );
+          },
+        );
     }
   }
 
@@ -313,30 +380,76 @@ export default function App() {
   }
 
   function acceptText(next) {
-    const current = runRef.current
-    if (current.result || authOpen) return
-    const at = Date.now()
-    if (current.startedAt !== null && at - current.startedAt >= duration * 1000) { finish(); return }
-    const start = current.pageIndex === 0 ? 0 : words.slice(0, current.pageIndex * WORDS_PER_PAGE).join(' ').length + 1
-    if (next.length < current.typed.length) {
-      if (!current.typed.startsWith(next) || !canDelete({ cursor: next.length, pageStart: start })) return
-      updateRun({ ...current, typed: next, presses: current.presses + 1, now: at })
-      return
+    const current = runRef.current;
+    if (current.result || authOpen || (custom && !customText)) return;
+    const nextTarget = custom ? customTarget(customText, next.length, current.pageIndex) : target;
+    const nextWords = custom ? nextTarget.split(" ") : words;
+    const at = Date.now();
+    if (
+      current.startedAt !== null &&
+      at - current.startedAt >= duration * 1000
+    ) {
+      finish();
+      return;
     }
-    if (next.length <= current.typed.length || next.length > target.length || !next.startsWith(current.typed)) return
-    const added = next.slice(current.typed.length)
+    const start =
+      current.pageIndex === 0
+        ? 0
+        : words.slice(0, current.pageIndex * WORDS_PER_PAGE).join(" ").length +
+          1;
+    if (next.length < current.typed.length) {
+      if (
+        !current.typed.startsWith(next) ||
+        !canDelete({ cursor: next.length, pageStart: start })
+      )
+        return;
+      updateRun({
+        ...current,
+        typed: next,
+        presses: current.presses + 1,
+        now: at,
+      });
+      return;
+    }
+    if (
+      next.length <= current.typed.length ||
+      (!custom && next.length > target.length) ||
+      !next.startsWith(current.typed)
+    )
+      return;
+    const added = next.slice(current.typed.length);
     for (let i = 0; i < added.length; i++) {
-      const expected = target[current.typed.length + i]
+      const expected = nextTarget[current.typed.length + i];
       if (added[i] !== expected) {
-        const key = expected === ' ' ? 'space' : expected.toLowerCase()
-        missedRef.current[key] = (missedRef.current[key] || 0) + 1
+        const key = expected === " " ? "space" : expected.toLowerCase();
+        missedRef.current[key] = (missedRef.current[key] || 0) + 1;
       }
     }
-    let pageIndex = current.pageIndex
-    while (pageIndex < totalPages - 1 && next.length >= words.slice(0, (pageIndex + 1) * WORDS_PER_PAGE).join(' ').length + 1) pageIndex++
-    const updated = { ...current, typed: next, presses: current.presses + added.length, startedAt: current.startedAt ?? at, now: at, pageIndex }
-    updateRun(updated)
-    if (next.length === target.length) finish(next, updated.presses, at)
+    let pageIndex = current.pageIndex;
+    while (
+      pageIndex < Math.ceil(nextWords.length / WORDS_PER_PAGE) - 1 &&
+      next.length >=
+        nextWords.slice(0, (pageIndex + 1) * WORDS_PER_PAGE).join(" ").length + 1
+    )
+      pageIndex++;
+    const updated = {
+      ...current,
+      typed: next,
+      presses: current.presses + added.length,
+      startedAt: current.startedAt ?? at,
+      now: at,
+      pageIndex,
+    };
+    updateRun(updated);
+    if (!custom && next.length === target.length) finish(next, updated.presses, at);
+  }
+
+  function applyCustomText() {
+    const prepared = prepareCustomText(customDraft);
+    setCustomError(prepared.error || "");
+    if (prepared.error) return;
+    setCustomText(prepared.text);
+    reset(duration, wordCount, Math.floor(Math.random() * 1e9), null);
   }
 
   function rematch() {
@@ -389,49 +502,69 @@ export default function App() {
           <div className="test-console">
           <div className="test-heading"><h1 tabIndex={-1}>{challengedHandle ? `Race ${challengedHandle}.` : ghost ? 'Race your best.' : 'Less talk. More type.'}</h1><p>{ghost ? `${formatMode(ghost.mode)} / Target: ${ghost.wpm} WPM, ${ghost.accuracy}% accuracy` : 'Beat the clock. Then beat yourself.'}</p></div>
           <div className="test-settings">
-            <fieldset disabled={active || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
-            <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>
-            <p className="settings-note">{ghost ? 'Race text and settings are locked.' : active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
+            {!ghost && page !== "race" && <fieldset>
+                    <legend>Text source</legend>
+                    <div className="segmented">
+                      {["words", "custom"].map((source) => <button key={source} aria-pressed={textSource === source} onClick={() => {
+                        setTextSource(source);
+                        reset(duration, wordCount, Math.floor(Math.random() * 1e9), null);
+                      }}>{source === "custom" ? "Custom" : "Words"}</button>)}
+                    </div>
+                  </fieldset>}
+            <fieldset disabled={(active && !custom) || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
+            {!custom && <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>}
+            <p className="settings-note">{custom ? 'Custom practice repeats until the timer ends. Scores stay on this device.' : ghost ? 'Race text and settings are locked.' : active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
           </div>
+          {custom && <div className="custom-editor">
+                  <label htmlFor="custom-text">Your practice text</label>
+                  <textarea id="custom-text" value={customDraft} onChange={(e) => setCustomDraft(e.target.value)} aria-describedby="custom-text-help custom-text-count" aria-invalid={!!customError} />
+                  <p id="custom-text-help">Up to 2,000 entered characters, including whitespace. Emoji may count as two characters (UTF-16). Applying text trims and joins whitespace into single spaces.</p>
+                  <p id="custom-text-count">{customDraft.length.toLocaleString()} / 2,000 characters</p>
+                  {customError && <p role="alert">{customError}</p>}
+                  <button className="brutal-btn primary" onClick={applyCustomText}>Use this text</button>
+                </div>}
           {!result && <div className="live-strip">
               <div className="clock"><strong>{Math.max(0, Math.ceil(duration - elapsed))}</strong><span>seconds left</span></div>
               <dl className="live-metrics"><div><dt>WPM</dt><dd>{active ? live.wpm : '0'}</dd></div><div><dt>Accuracy</dt><dd>{live.acc}<small>%</small></dd></div></dl>
-              <div className="page-position"><span>Page {run.pageIndex + 1} / {totalPages}</span><strong>{completedWords} / {wordCount} words</strong></div>
+              <div className="page-position"><span>Page {run.pageIndex + 1}{!custom && ` / ${totalPages}`}</span><strong>{completedWords}{!custom && ` / ${wordCount}`} words</strong></div>
             </div>}
           </div>
           {!result ? <div className="test-stage">
             <div className={`typing-card ${focused ? 'is-focused' : ''}`} ref={cardRef}>
               <div className="typing-text" aria-label="Text to type" style={{ filter: focused ? undefined : 'blur(4px)' }}>
                 {ghost && ghostCursor < pageStart && <p className="ghost-edge">Ghost is {pageStart - ghostCursor} characters before this page.</p>}
+                {custom && !customText && <p>Add text above, then choose Use this text.</p>}
                 {pageWords.map((word, wi) => {
                   const offset = charOffset
                   charOffset += word.length + 1
-                  return <span className={`typing-word ${cursor >= offset && cursor <= offset + word.length ? 'current-word' : ''}`} key={offset}>{[...word, ...(wi < pageWords.length - 1 ? [' '] : [])].map((ch, i) => {
-                    const index = offset + i
-                    const typed = run.typed[index]
+                  let characterOffset = offset
+                  return <span className={`typing-word ${cursor >= offset && cursor <= offset + word.length ? 'current-word' : ''}`} key={offset}>{[...word, ...(wi < pageWords.length - 1 ? [' '] : [])].map((ch) => {
+                    const index = characterOffset
+                    characterOffset += ch.length
+                    const typed = run.typed.length <= index ? undefined : run.typed.slice(index, index + ch.length)
                     return <span key={index} data-caret={index === cursor || undefined} className={`${typed === undefined ? 'untyped' : typed === ch ? 'correct' : 'incorrect'} ${index === ghostCursor ? 'ghost-char' : ''}`}>{ch}</span>
                   })}{wi === pageWords.length - 1 && (cursor === offset + word.length || ghostCursor === offset + word.length) && <span data-caret={cursor === offset + word.length || undefined} className={ghostCursor === offset + word.length ? 'ghost-char' : ''} aria-hidden="true">&nbsp;</span>}</span>
                 })}
                 {ghost && ghostCursor > pageEnd && <p className="ghost-edge">Ghost is {ghostCursor - pageEnd} characters beyond this page.</p>}
               </div>
-              <textarea ref={inputRef} value={run.typed} onChange={(e) => { acceptText(e.target.value); e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} onKeyDown={(e) => {
+              <textarea ref={inputRef} disabled={custom && !customText} value={run.typed} onChange={(e) => { acceptText(e.target.value); e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} onKeyDown={(e) => {
                 if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); reset() }
                 if (e.key === 'Escape') { e.preventDefault(); inputRef.current.blur(); document.querySelector('nav button')?.focus() }
                 if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) e.preventDefault()
               }} onPaste={(e) => e.preventDefault()} onDrop={(e) => e.preventDefault()} onFocus={(e) => { setFocused(true); e.target.setSelectionRange(run.typed.length, run.typed.length) }} onBlur={() => setFocused(false)} onSelect={(e) => { if (e.target.selectionStart !== e.target.value.length) e.target.setSelectionRange(e.target.value.length, e.target.value.length) }} autoCapitalize="off" autoComplete="off" autoCorrect="off" spellCheck={false} aria-label="Typing input" aria-describedby="typing-help" className="typing-input" />
-              {!focused && <div className="focus-cover" aria-hidden="true"><span>Click here or press a key to type</span></div>}
+              {!focused && <div className="focus-cover" aria-hidden="true"><span>{custom && !customText ? "Apply your text to begin" : "Click here or press a key to type"}</span></div>}
               {focused && caret && <div className="smooth-caret" aria-hidden="true" style={{ transform: `translate(${caret.x}px, ${caret.y}px)`, height: caret.h }} />}
               <div className="test-progress" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Typing progress"><div style={{ width: `${progress}%` }} /></div>
             </div>
             <div className="test-bottom"><p id="typing-help"><kbd>Tab</kbd> restart <span>/</span> <kbd>Esc</kbd> leave test<br /><span className="muted">Timer starts on your first key. Backspace stays on this page.</span></p><button className="brutal-btn" onClick={() => reset()}>Restart test</button></div>
-            <div className="ghost-row">{ghost ? <><p>Target: <strong>{ghost.wpm} WPM</strong>. <strong>{Math.abs(characterDelta)} characters {characterDelta >= 0 ? 'ahead' : 'behind'}</strong>. Ghost position {ghostCursor} / {target.length}.{ghost.trace.length === 0 && ' Average-pace replay.'}</p><button className="text-button" onClick={() => navigate('type')}>Leave race</button></> : pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">Complete this mode to set a best and unlock your ghost.</p>}</div>
+            <div className="ghost-row">{custom ? <p className="muted">Custom practice does not count toward personal bests or ghosts.</p> : ghost ? <><p>Target: <strong>{ghost.wpm} WPM</strong>. <strong>{Math.abs(characterDelta)} characters {characterDelta >= 0 ? 'ahead' : 'behind'}</strong>. Ghost position {ghostCursor} / {target.length}.{ghost.trace.length === 0 && ' Average-pace replay.'}</p><button className="text-button" onClick={() => navigate('type')}>Leave race</button></> : pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">Complete this mode to set a best and unlock your ghost.</p>}</div>
             {localGhostUnavailable && <p role="status">Ghost unavailable. This record cannot be raced.</p>}
           </div> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
             <div className="result-heading"><h2>That's your run.</h2>{result.isBest && <span className="best-stamp">New personal best</span>}</div>
             {ghost && <div className="ghost-result"><h3>{ghostOutcome(result, ghost)}</h3><p>{challengedHandle && `Challenged ${challengedHandle}. `}Your {result.wpm} WPM / {result.acc}% accuracy versus ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.</p><p>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM / {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0 ? '+' : ''}{Number((result.acc - ghost.accuracy).toFixed(1))} accuracy points</p></div>}
             <div className="result-hero"><div><span className="metric-label">Words per minute</span><strong>{result.wpm}</strong></div><div><span className="metric-label">Accuracy</span><strong>{result.acc}<small>%</small></strong></div></div>
             <PaceChart samples={result.samples} comparison={ghost ? ghostPace(ghost) : result.previous?.samples || []} comparisonLabel={ghost ? 'Challenged ghost' : 'Previous best'} />
-            {!ghost && !result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}
+            {!custom && !ghost && !result.previous?.samples?.length && <p className="comparison-note">{result.previous ? 'Your earlier best has no pace samples. Future bests will include a comparison curve.' : 'First recorded run in this mode. Your next run can compare against this curve.'}</p>}
             <dl className="result-details"><div><dt>Raw WPM</dt><dd>{result.raw}</dd></div><div><dt>Net WPM</dt><dd>{result.wpm}</dd></div><div><dt>Consistency</dt><dd>{result.consistency}%</dd></div><div><dt>Elapsed</dt><dd>{Number(result.elapsed_s.toFixed(2))}s</dd></div></dl>
             <div className="missed-keys"><h3>Missed keys</h3>{rankMissed(result.missed_keys).length ? <ul>{rankMissed(result.missed_keys).map(([key, count]) => <li key={key}><kbd>{key}</kbd><span>{count} {count === 1 ? 'miss' : 'misses'}</span></li>)}</ul> : <p>No missed keys in this run.</p>}</div>
             <div className="result-actions"><button className="brutal-btn primary" onClick={() => reset()}>{ghost ? 'Rematch' : 'Type again'} <kbd>Tab</kbd></button>{!ghost && pb && <button className="brutal-btn" onClick={rematch}>Race your best</button>}{ghost && <button className="brutal-btn" onClick={() => navigate('type')}>Leave race</button>}<button className="text-button" onClick={() => navigate('stats')}>View history</button></div>

@@ -4,6 +4,8 @@ let memoryRuns = []
 let memoryPbs = {}
 let sessionOnly = false
 
+export const isCustomMode = (mode) => /^custom-\d+s$/.test(mode || '')
+
 function storage() {
   return globalThis.localStorage
 }
@@ -37,15 +39,16 @@ export function loadPbs() {
 export function saveRun(run) {
   const runs = [run, ...loadHistory().filter((entry) => entry.id !== run.id)].slice(0, 50)
   const pbs = loadPbs()
-  const previous = pbs[run.mode] || null
-  const isBest = !previous || run.wpm > previous.wpm || (run.wpm === previous.wpm && run.acc > previous.acc)
+  const custom = isCustomMode(run.mode)
+  const previous = custom ? null : pbs[run.mode] || null
+  const isBest = !custom && (!previous || run.wpm > previous.wpm || (run.wpm === previous.wpm && run.acc > previous.acc))
   const nextPbs = isBest ? { ...pbs, [run.mode]: run } : pbs
   memoryRuns = runs
   memoryPbs = nextPbs
   let persisted = true
   try {
     storage().setItem(HISTORY_KEY, JSON.stringify(runs))
-    storage().setItem(PB_KEY, JSON.stringify(nextPbs))
+    if (!custom) storage().setItem(PB_KEY, JSON.stringify(nextPbs))
   } catch {
     persisted = false
     sessionOnly = true
@@ -54,6 +57,7 @@ export function saveRun(run) {
 }
 
 export function formatMode(mode) {
+  if (isCustomMode(mode)) return `Custom practice / ${mode.slice(7)}`
   const match = mode?.match(/^time-(\d+)w-(\d+)s$/)
   return match ? `${match[1]} words / ${match[2]}s` : mode
 }

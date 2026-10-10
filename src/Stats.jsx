@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase.js'
-import { formatMode, loadHistory } from './history.js'
+import { formatMode, isCustomMode, loadHistory } from './history.js'
 import PaceChart from './PaceChart.jsx'
 
 const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -17,11 +17,12 @@ export default function Stats({ user, onLogin, onBack, freshRun, embedded = fals
   const runs = source === 'local' ? localRuns : cloudRuns
   const modes = [...new Set(runs.map((run) => run.mode))]
   const filtered = mode === 'all' ? runs : runs.filter((run) => run.mode === mode)
+  const standard = filtered.filter((run) => !isCustomMode(run.mode))
   const selected = filtered.find((run) => run.id === selectedId) || filtered[0]
   const pbMap = {}
-  for (const run of filtered) if (!pbMap[run.mode] || run.wpm > pbMap[run.mode].wpm) pbMap[run.mode] = run
+  for (const run of standard) if (!pbMap[run.mode] || run.wpm > pbMap[run.mode].wpm) pbMap[run.mode] = run
   const byDay = {}
-  for (const run of filtered.slice(0, 30).toReversed()) {
+  for (const run of standard.slice(0, 30).toReversed()) {
     const date = run.created_at.slice(0, 10)
     if (!byDay[date]) byDay[date] = []
     byDay[date].push(run.wpm)
@@ -66,8 +67,9 @@ export default function Stats({ user, onLogin, onBack, freshRun, embedded = fals
           : runs.length === 0 ? <section className="state-panel"><h2>No finished runs yet.</h2><p>Complete a typing test to see your scores and pace here.</p><button className="brutal-btn primary" onClick={onBack}>Start a test</button></section>
             : <>
               <label className="mode-filter">Compare a mode<select value={mode} onChange={(e) => { setMode(e.target.value); setSelectedId(null) }}><option value="all">All modes</option>{modes.map((m) => <option key={m} value={m}>{formatMode(m)}</option>)}</select></label>
-              <dl className="history-summary"><div><dt>Runs shown</dt><dd>{filtered.length}</dd></div><div><dt>Best WPM</dt><dd>{filtered.length ? Math.max(...filtered.map((r) => r.wpm)) : 'None'}</dd></div><div><dt>Average WPM</dt><dd>{filtered.length ? Math.round(filtered.reduce((sum, r) => sum + r.wpm, 0) / filtered.length) : 'None'}</dd></div></dl>
-              <section className="history-chart"><div className="section-heading"><h2>Daily average WPM</h2><p>Latest {Math.min(30, filtered.length)} {filtered.length === 1 ? 'run' : 'runs'} in {mode === 'all' ? 'all modes' : formatMode(mode)}. Dates use UTC.</p></div><PaceChart samples={trend} kind="history" label={trend.length ? `Daily average WPM: ${trend[0].label} to ${trend.at(-1).label} UTC` : 'Daily average WPM'} /></section>
+              <dl className="history-summary"><div><dt>Runs shown</dt><dd>{filtered.length}</dd></div><div><dt>Standard best WPM</dt><dd>{standard.length ? Math.max(...standard.map((r) => r.wpm)) : 'None'}</dd></div><div><dt>Standard average WPM</dt><dd>{standard.length ? Math.round(standard.reduce((sum, r) => sum + r.wpm, 0) / standard.length) : 'None'}</dd></div></dl>
+              <p className="muted">Custom practice is excluded from standard records and daily averages.</p>
+              <section className="history-chart"><div className="section-heading"><h2>Daily average WPM</h2><p>Latest {Math.min(30, standard.length)} standard {standard.length === 1 ? 'run' : 'runs'}. Dates use UTC.</p></div><PaceChart samples={trend} kind="history" label={trend.length ? `Daily average WPM: ${trend[0].label} to ${trend.at(-1).label} UTC` : 'Daily average WPM'} /></section>
               {selected && <section className="history-chart"><div className="section-heading"><h2>WPM during this run</h2><p>{formatMode(selected.mode)} / {fmtDate(selected.created_at)}</p></div><PaceChart samples={selected.samples || []} label={`${selected.wpm} WPM / ${selected.acc}% accuracy`} /></section>}
               <section><div className="section-heading"><h2>Best by mode</h2><span className="muted">Within this history</span></div><div className="best-list">{Object.values(pbMap).map((r) => <div key={r.mode}><span>{formatMode(r.mode)}</span><strong>{r.wpm} <small>WPM</small></strong><span>{r.acc}% accuracy</span></div>)}</div></section>
               <section><div className="section-heading"><h2>Last 10 runs</h2><span className="muted">Choose a score for its pace curve.</span></div><div className="table-scroll" tabIndex={0} role="region" aria-label="Recent runs"><table><thead><tr><th scope="col">WPM</th><th scope="col">Accuracy</th><th scope="col">Mode</th><th scope="col">Finished</th></tr></thead><tbody>{filtered.slice(0, 10).map((r) => <tr key={r.id} className={selected?.id === r.id ? 'selected-row' : ''}><td><button className="score-link" aria-pressed={selected?.id === r.id} aria-label={`View ${r.wpm} WPM run from ${fmtDate(r.created_at)}`} onClick={() => setSelectedId(r.id)}>{r.wpm}</button></td><td>{r.acc}%</td><td>{formatMode(r.mode)}</td><td>{fmtDate(r.created_at)}</td></tr>)}</tbody></table></div></section>

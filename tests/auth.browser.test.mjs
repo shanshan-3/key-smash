@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, unlink } from 'node:fs/promises'
+import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -183,7 +183,7 @@ async function respond({ requestId, request }) {
 before(async () => {
   process.env.VITE_SUPABASE_URL = authOrigin
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_fixture'
-  server = await createServer({ server: { host: '127.0.0.1', port: 0 } })
+  server = await createServer({ root: process.env.KEYSMASH_TEST_ROOT, server: { host: '127.0.0.1', port: 0, watch: null } })
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
   profile = await mkdtemp(join(tmpdir(), 'keysmash-persistent-login-'))
@@ -353,8 +353,199 @@ test('a callback service failure gives connection feedback rather than declaring
   }
 })
 
+async function fillTextarea(selector, text) {
+  await evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(text)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+}
+
+test('custom editor applies normalized text without starting the timer or altering standard settings', async () => {
+  await resetGuest()
+  await click('Custom')
+  await fillTextarea('#custom-text', '  Hi,\n\tTHERE!  ')
+  await click('Use this text')
+  await waitFor("document.querySelector('.typing-text')?.textContent.startsWith('Hi, THERE! Hi, THERE!')")
+  assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '60')
+  await fillTextarea('#custom-text', '   \n\t')
+  await click('Use this text')
+  assert.match(await evaluate("document.querySelector('.custom-editor [role=alert]').textContent"), /nonblank/i)
+  assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('Hi, THERE!')"), true)
+  await fillTextarea('#custom-text', 'a'.repeat(2000))
+  await click('Use this text')
+  await waitFor("document.querySelector('.typing-text').textContent.startsWith('a'.repeat(2000))")
+  await fillTextarea('#custom-text', 'b'.repeat(2001))
+  await click('Use this text')
+  assert.match(await evaluate("document.querySelector('.custom-editor [role=alert]').textContent"), /2,000/)
+  assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('a'.repeat(2000))"), true)
+})
+
+async function expireCustom(duration, typed) {
+  await evaluate('window.practiceClock = Date.now; window.practiceStart = Date.now(); Date.now = () => window.practiceStart')
+  try {
+    await fillTextarea('.typing-input', typed)
+    assert.equal(await evaluate("!!document.querySelector('.results')"), false, 'Passage exhaustion must not finish a run')
+    await evaluate(`Date.now = () => window.practiceStart + ${duration * 1000}`)
+    await waitFor("!!document.querySelector('.results')")
+  } finally {
+    await evaluate('Date.now = window.practiceClock')
+  }
+}
+
+test('all custom durations score case and punctuation errors and repeat across pages without PB or cloud effects', async () => {
+  await resetGuest()
+  await navigate(callbackPath())
+  await expectSignedIn()
+  const prior = { id: 'prior-standard', mode: 'time-60w-60s', wpm: 40, acc: 95, created_at: '2026-10-10T00:00:00Z' }
+  const priorPbs = JSON.stringify({ [prior.mode]: prior })
+  await evaluate(`localStorage.setItem('keysmash-pb-v1', ${JSON.stringify(priorPbs)}); localStorage.setItem('keysmash-history-v1', ${JSON.stringify(JSON.stringify([prior]))})`)
+  savedRuns.length = 0
+  await click('Custom')
+  await fillTextarea('#custom-text', 'Ab, Z!')
+  await click('Use this text')
+  for (const duration of [15, 30, 60, 120]) {
+    await click(`${duration}s`)
+    await expireCustom(duration, 'Ab, Z! '.repeat(30) + 'Ab, z!')
+    const entry = await evaluate("JSON.parse(localStorage.getItem('keysmash-history-v1'))[0]")
+    assert.equal(entry.mode, `custom-${duration}s`)
+    assert.equal(entry.wpm, ({ 15: 172, 30: 86, 60: 43, 120: 22 })[duration])
+    assert.equal(entry.acc, 99.5)
+    assert.equal(entry.elapsed_s, duration)
+    assert.equal(entry.seed, undefined)
+    assert.equal(entry.word_set_version, undefined)
+    assert.equal(entry.text, undefined)
+    assert.equal(entry.typed, undefined)
+    assert.equal(await evaluate("localStorage.getItem('keysmash-pb-v1')"), priorPbs)
+    assert.doesNotMatch(await evaluate("document.querySelector('.results').textContent"), /personal best|Race your best|First recorded/i)
+    assert.equal(savedRuns.length, 0)
+    if (duration === 120) break
+    await click('Type again Tab')
+    await waitFor("!!document.querySelector('.typing-input')")
+    assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('Ab, Z!')"), true)
+    assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), String(duration))
+  }
+  await click('View history')
+  await waitFor("document.querySelector('.stats-page')?.textContent.includes('Custom practice / 15s')")
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('.history-summary dd')].map(el => el.textContent)"), ['5', '40', '40'])
+  assert.equal(await evaluate("document.querySelector('.best-list').children.length"), 1)
+  await click('Type')
+  await click('Words')
+  await fillTextarea('.typing-input', await evaluate("document.querySelector('.typing-text').textContent.slice(0, 5)"))
+  await evaluate('window.afterCustomClock = Date.now; Date.now = () => window.afterCustomClock() + 121000')
+  try {
+    await waitFor("document.querySelector('.results')?.textContent.includes('Cloud copy saved')")
+    assert.equal(savedRuns.length, 1)
+    assert.equal(savedRuns[0].user_id, user.id)
+    assert.match(savedRuns[0].mode, /^time-/)
+  } finally {
+    await evaluate('Date.now = window.afterCustomClock')
+  }
+})
+
+test('custom draft editing, apply and timer changes reset only when explicitly requested', async () => {
+  await resetGuest()
+  await click('Custom')
+  await fillTextarea('#custom-text', 'One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen Fourteen Fifteen Sixteen Seventeen Eighteen Nineteen Twenty Twentyone Twentytwo Twentythree')
+  await click('Use this text')
+  await fillTextarea('.typing-input', 'One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen Fourteen Fifteen Sixteen Seventeen Eighteen Nineteen Twenty ')
+  await waitFor("document.querySelector('.page-position').textContent.includes('Page 2')")
+  await fillTextarea('#custom-text', 'New passage.')
+  assert.equal(await evaluate("document.querySelector('.typing-input').value.startsWith('One Two')"), true)
+  await click('30s')
+  assert.equal(await evaluate("document.querySelector('.typing-input').value"), '')
+  assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('One Two')"), true)
+  await fillTextarea('.typing-input', 'One')
+  await click('Use this text')
+  await waitFor("document.querySelector('.typing-text').textContent.startsWith('New passage.')")
+  assert.equal(await evaluate("document.querySelector('.typing-input').value"), '')
+  assert.equal(await evaluate("localStorage.getItem('keysmash-history-v1')"), null)
+})
+
+test('custom editor remains usable with keyboard input at 320px and standard saving still works afterward', async () => {
+  await resetGuest()
+  await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false })
+  try {
+    await click('Custom')
+    await evaluate("document.querySelector('#custom-text').focus()")
+    await send('Input.insertText', { text: 'Hi, THERE!' })
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 })
+    assert.equal(await evaluate('document.activeElement.textContent.trim()'), 'Use this text')
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    await waitFor("document.activeElement.classList.contains('typing-input')")
+    assert.equal(await evaluate("document.querySelector('#custom-text').value"), 'Hi, THERE!')
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
+    const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+    await writeFile(join(tmpdir(), 'keysmash-custom-320.png'), Buffer.from(shot.data, 'base64'))
+    await click('15s')
+    await expireCustom(15, 'Hi, THERE! Hi, THERE!')
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
+    await click('Words')
+    await fillTextarea('.typing-input', await evaluate("document.querySelector('.typing-text').textContent.slice(0, 5)"))
+    await evaluate('window.standardClock = Date.now; Date.now = () => window.standardClock() + 121000')
+    await waitFor("!!document.querySelector('.results')")
+    await evaluate('Date.now = window.standardClock')
+    assert.equal(await evaluate("JSON.parse(localStorage.getItem('keysmash-history-v1'))[0].mode.startsWith('time-')"), true)
+    assert.equal(await evaluate("Object.keys(JSON.parse(localStorage.getItem('keysmash-pb-v1'))).length"), 1)
+    await click('Race your best')
+    await waitFor("document.querySelector('.test-heading')?.textContent.includes('Race your best')")
+    assert.equal(await evaluate("[...document.querySelectorAll('.test-settings fieldset')].every(field => field.disabled)"), true)
+    await fillTextarea('.typing-input', await evaluate("document.querySelector('.typing-text').textContent.slice(0, 5)"))
+    await evaluate('window.ghostClock = Date.now; Date.now = () => window.ghostClock() + 121000')
+    try {
+      await waitFor("!!document.querySelector('.ghost-result')")
+      assert.equal(await evaluate("[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Rematch Tab')"), true)
+    } finally {
+      await evaluate('Date.now = window.ghostClock')
+    }
+  } finally {
+    await send('Emulation.clearDeviceMetricsOverride')
+  }
+})
+
+test('custom text preserves Unicode and editor paste, with blocked storage feedback', async () => {
+  await resetGuest()
+  const blocked = await send('Page.addScriptToEvaluateOnNewDocument', { source: "Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('Blocked', 'SecurityError') } })" })
+  try {
+    await navigate('/')
+    await expectGuest()
+    await click('Custom')
+    await evaluate("document.querySelector('#custom-text').focus()")
+    await send('Browser.grantPermissions', { origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] })
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await evaluate("navigator.clipboard.writeText('É🙂,\\nOK!')")
+    await evaluate("document.querySelector('#custom-text').focus()")
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'v', code: 'KeyV', modifiers: 2, windowsVirtualKeyCode: 86, commands: ['Paste'] })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'v', code: 'KeyV', modifiers: 2, windowsVirtualKeyCode: 86 })
+    await waitFor("document.querySelector('#custom-text').value === 'É🙂,\\nOK!'")
+    await click('Use this text')
+    await waitFor("document.querySelector('.typing-text').textContent.startsWith('É🙂, OK! É🙂, OK!')")
+    await click('15s')
+    await expireCustom(15, 'É🙂, OK! É🙂, OK!')
+    assert.match(await evaluate("document.querySelector('.results [role=status]').textContent"), /session only/)
+    assert.equal(await evaluate("document.querySelector('.result-hero > div:nth-child(2) strong').textContent"), '100%')
+  } finally {
+    await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: blocked.identifier })
+  }
+})
+
+test('custom results and local history remain available when storage is full', async () => {
+  await resetGuest()
+  await click('Custom')
+  await fillTextarea('#custom-text', 'Keep typing!')
+  await click('Use this text')
+  await click('15s')
+  await evaluate("window.savedSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function() { throw new DOMException('Full', 'QuotaExceededError') }")
+  try {
+    await expireCustom(15, 'Keep typing! Keep typing!')
+    assert.match(await evaluate("document.querySelector('.results [role=status]').textContent"), /session only/)
+    await click('View history')
+    await waitFor("document.querySelector('.stats-page')?.textContent.includes('Custom practice / 15s')")
+  } finally {
+    await evaluate('Storage.prototype.setItem = window.savedSetItem')
+  }
+})
+
 test('an unconfigured site still lets a guest finish a standard typing test', async () => {
-  const localServer = await createServer({ define: { 'import.meta.env.VITE_SUPABASE_URL': '""', 'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': '""' }, server: { host: '127.0.0.1', port: 0 } })
+  const localServer = await createServer({ root: process.env.KEYSMASH_TEST_ROOT, define: { 'import.meta.env.VITE_SUPABASE_URL': '""', 'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': '""' }, server: { host: '127.0.0.1', port: 0, watch: null } })
   const configuredOrigin = origin
   try {
     await localServer.listen()
