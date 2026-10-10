@@ -23,7 +23,7 @@ export default function ProfileImprovement({ modes, trends }) {
     return () => observer.disconnect()
   }, [])
   const mode = modes.find((record) => record.mode === chosenMode)?.mode || modes[0]?.mode || ''
-  const values = new Map(trends.filter((entry) => entry.mode === mode).map((entry) => [entry.week_start, entry]))
+  const values = new Map((trends || []).filter((entry) => entry.mode === mode).map((entry) => [entry.week_start, entry]))
   const currentWeek = currentUtcWeek()
   const buckets = Array.from({ length: weeks }, (_, index) => {
     const week = new Date(currentWeek - (weeks - index - 1) * WEEK_MS).toISOString().slice(0, 10)
@@ -45,8 +45,8 @@ export default function ProfileImprovement({ modes, trends }) {
   const range = ranges.find((entry) => entry.weeks === weeks).label
 
   return <section className="profile-improvement" ref={container} aria-labelledby={`${id}-heading`}>
-    <div className="section-heading"><h2 id={`${id}-heading`}>Improvement.</h2><p>Weekly average WPM, one combined mode at a time.</p></div>
-    {modes.length === 0 ? <p className="empty-copy">Complete a cloud-saved run to begin your improvement record.</p> : <>
+    <div className="section-heading"><h2 id={`${id}-heading`}>Weekly average WPM.</h2><p>Compare one practiced mode at a time.</p></div>
+    {trends == null ? <p className="empty-copy">Weekly pace data is unavailable for this profile. Reload the page to request it again.</p> : modes.length === 0 ? <p className="empty-copy">Complete a cloud-saved run to begin your improvement record.</p> : <>
       <div className="improvement-controls">
         <label htmlFor={`${id}-mode`}>Practiced mode<select id={`${id}-mode`} value={mode} onChange={(event) => setChosenMode(event.target.value)}>{modes.map((record) => <option key={record.mode} value={record.mode}>{formatMode(record.mode)}</option>)}</select></label>
         <div className="segmented" role="group" aria-label="Improvement range">{ranges.map((entry) => <button key={entry.weeks} aria-pressed={weeks === entry.weeks} onClick={() => setWeeks(entry.weeks)}>{entry.label}</button>)}</div>

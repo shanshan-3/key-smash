@@ -3,7 +3,7 @@ import ProfileImprovement from './ProfileImprovement.jsx'
 import ProfileActivity from './ProfileActivity.jsx'
 
 function formatTypingTime(seconds) {
-  if (seconds == null) return '—'
+  if (seconds == null) return 'N/A'
   const total = Math.round(Number(seconds))
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor(total % 3600 / 60)
@@ -29,8 +29,8 @@ export default function ProfileLedger({ profile, children, onRace }) {
   return <>
     {profile && <><dl className="profile-totals">
       <div><dt>Completed runs</dt><dd>{profile.run_count}</dd></div>
-      <div><dt>Average WPM</dt><dd>{profile.average_wpm ?? '—'}</dd></div>
-      <div><dt>Average accuracy</dt><dd>{profile.average_accuracy == null ? '—' : `${profile.average_accuracy}%`}</dd></div>
+      <div><dt>Average WPM</dt><dd>{profile.average_wpm ?? 'N/A'}</dd></div>
+      <div><dt>Average accuracy</dt><dd>{profile.average_accuracy == null ? 'N/A' : `${profile.average_accuracy}%`}</dd></div>
       <div><dt>Recorded typing time</dt><dd>{formatTypingTime(profile.recorded_typing_seconds)}</dd></div>
     </dl>
     <p className="profile-data-note">All-time cloud results across every mode. Typing time includes measured runs only; local-only runs stay on their device.</p></>}
@@ -54,7 +54,7 @@ export default function ProfileLedger({ profile, children, onRace }) {
           </div>
         </details>
       </section>}
-    {profile && <ProfileImprovement modes={practicedModes} trends={profile.weekly_mode_trends || []} />}
+    {profile && <ProfileImprovement modes={practicedModes} trends={profile.weekly_mode_trends} />}
     {profile && <ProfileActivity activity={profile.weekly_activity || []} />}
   </>
 }

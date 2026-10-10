@@ -20,22 +20,26 @@ export default function PaceChart({ samples = [], comparison = [], label = 'WPM 
       canvas.height = height * dpr
       const ctx = canvas.getContext('2d')
       if (!ctx) return
+      const palette = getComputedStyle(document.documentElement)
+      const ink = palette.getPropertyValue('--ink').trim()
+      const muted = palette.getPropertyValue('--muted').trim()
+      const rule = palette.getPropertyValue('--rule').trim()
       ctx.scale(dpr, dpr)
-      const pad = { left: 46, right: 16, top: 28, bottom: 36 }
+      const pad = { left: 46, right: 24, top: 28, bottom: 36 }
       const w = width - pad.left - pad.right
       const h = height - pad.top - pad.bottom
       const maxTime = Math.max(1, ...points.map((p) => p.second), ...pbPoints.map((p) => p.second))
       const maxWpm = Math.max(20, Math.ceil(Math.max(...points.map((p) => p.net), ...pbPoints.map((p) => p.net)) / 20) * 20)
       const x = (second) => pad.left + second / maxTime * w
       const y = (value) => pad.top + h - value / maxWpm * h
-      ctx.font = '11px "Space Mono", monospace'
-      ctx.fillStyle = '#50504a'
+      ctx.font = '14px "Space Mono", monospace'
+      ctx.fillStyle = muted
       ctx.textAlign = 'right'
       for (let i = 0; i <= 4; i++) {
         const value = maxWpm * i / 4
         ctx.fillText(Math.round(value).toString(), pad.left - 10, y(value) + 4)
         ctx.beginPath()
-        ctx.strokeStyle = '#dedbd2'
+        ctx.strokeStyle = rule
         ctx.lineWidth = 1
         ctx.moveTo(pad.left, y(value))
         ctx.lineTo(width - pad.right, y(value))
@@ -56,14 +60,14 @@ export default function PaceChart({ samples = [], comparison = [], label = 'WPM 
       function line(series, dashed) {
         if (!series.length) return
         ctx.beginPath()
-        ctx.strokeStyle = '#111111'
+        ctx.strokeStyle = ink
         ctx.lineWidth = dashed ? 2 : 3
         ctx.setLineDash(dashed ? [6, 5] : [])
         series.forEach((p, i) => i === 0 ? ctx.moveTo(x(p.second), y(p.net)) : ctx.lineTo(x(p.second), y(p.net)))
         ctx.stroke()
         ctx.setLineDash([])
         if (series.length === 1) {
-          ctx.fillStyle = '#111111'
+          ctx.fillStyle = ink
           ctx.fillRect(x(series[0].second) - 3, y(series[0].net) - 3, 6, 6)
         }
       }
@@ -71,6 +75,7 @@ export default function PaceChart({ samples = [], comparison = [], label = 'WPM 
       line(points, false)
     }
     draw()
+    document.fonts.ready.then(draw)
     const observer = new ResizeObserver(draw)
     observer.observe(container)
     return () => observer.disconnect()

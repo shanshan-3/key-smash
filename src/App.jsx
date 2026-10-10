@@ -364,25 +364,28 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <a href="#main" className="skip-link">Skip to typing</a>
+      <a href="#main" className="skip-link">Skip to content</a>
       <header className="masthead">
         <button className="wordmark" onClick={() => navigate('type')} aria-label="KEYSMASH home"><img src="/favicon.png" alt="" width="40" height="40" />KEYSMASH<span aria-hidden="true">.</span></button>
         <nav aria-label="Main navigation"><button aria-current={page === 'type' ? 'page' : undefined} onClick={() => navigate('type')}>Type</button>{user ? <AccountMenu current={page === 'owner'} route={route} profile={ownerProfile?.userId === user.id ? ownerProfile : null} onNavigate={navigate} onLogout={logout} /> : <><button aria-current={page === 'stats' ? 'page' : undefined} onClick={() => navigate('stats')}>Stats</button>{supabase && <button onClick={() => { setAuthMsg(''); setAuthOpen(true) }}>Log in</button>}</>}</nav>
       </header>
       <main id="main" className="app-main" tabIndex={-1}>
         {page === 'owner' ? <OwnerProfile key={user.id} user={user} ownerProfile={ownerProfile?.userId === user.id ? ownerProfile : null} onProfileChange={updateOwnerProfile} onBack={() => navigate('type')} onRace={(mode) => navigate(`/profile/race/${mode}`)} freshRun={freshRun} /> : page === 'stats' ? <Stats user={user} onLogin={() => setAuthOpen(true)} onBack={() => navigate('type')} freshRun={freshRun} /> : page === 'profile' ? <PublicProfile key={publicHandle} handle={publicHandle} onBack={() => navigate('type')} onRace={(handle, mode) => navigate(`/u/${handle}/race/${mode}`)} /> : !raceReady ? <><div className="page-heading"><h1 tabIndex={-1}>{publicRace ? 'Public ghost race.' : 'Your ghost race.'}</h1><button className="brutal-btn" onClick={() => navigate(publicRace ? request.valid ? `/u/${request.handle}` : '/' : '/profile')}>{publicRace && !request.valid ? 'Start typing' : 'Back to profile'}</button></div>{raceState.route !== route || raceState.loading ? <p className="state-panel" role="status">Loading ghost...</p> : raceState.error ? <section className="state-panel" role="alert"><h2>Ghost could not load.</h2><p>Check your connection and try again.</p><button className="brutal-btn" onClick={() => setRaceRetry((n) => n + 1)}>Retry ghost</button></section> : <section className="state-panel"><h2>Ghost unavailable.</h2><p>This record cannot be raced.</p></section>}</> : <>
+          <div className={`test-workspace${result ? ' is-result' : ''}`}>
+          <div className="test-console">
           <div className="test-heading"><h1 tabIndex={-1}>{challengedHandle ? `Race ${challengedHandle}.` : ghost ? 'Race your best.' : 'Less talk. More type.'}</h1><p>{ghost ? `${formatMode(ghost.mode)} / Target: ${ghost.wpm} WPM, ${ghost.accuracy}% accuracy` : 'Beat the clock. Then beat yourself.'}</p></div>
           <div className="test-settings">
             <fieldset disabled={active || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
             <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>
             <p className="settings-note">{ghost ? 'Race text and settings are locked.' : active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
           </div>
-          {!result ? <>
-            <div className="live-strip">
+          {!result && <div className="live-strip">
               <div className="clock"><strong>{Math.max(0, Math.ceil(duration - elapsed))}</strong><span>seconds left</span></div>
               <dl className="live-metrics"><div><dt>WPM</dt><dd>{active ? live.wpm : '0'}</dd></div><div><dt>Accuracy</dt><dd>{live.acc}<small>%</small></dd></div></dl>
               <div className="page-position"><span>Page {run.pageIndex + 1} / {totalPages}</span><strong>{completedWords} / {wordCount} words</strong></div>
-            </div>
+            </div>}
+          </div>
+          {!result ? <div className="test-stage">
             <div className={`typing-card ${focused ? 'is-focused' : ''}`} ref={cardRef}>
               <div className="typing-text" aria-label="Text to type" style={{ filter: focused ? undefined : 'blur(4px)' }}>
                 {ghost && ghostCursor < pageStart && <p className="ghost-edge">Ghost is {pageStart - ghostCursor} characters before this page.</p>}
@@ -409,7 +412,7 @@ export default function App() {
             <div className="test-bottom"><p id="typing-help"><kbd>Tab</kbd> restart <span>/</span> <kbd>Esc</kbd> leave test<br /><span className="muted">Timer starts on your first key. Backspace stays on this page.</span></p><button className="brutal-btn" onClick={() => reset()}>Restart test</button></div>
             <div className="ghost-row">{ghost ? <><p>Target: <strong>{ghost.wpm} WPM</strong>. <strong>{Math.abs(characterDelta)} characters {characterDelta >= 0 ? 'ahead' : 'behind'}</strong>. Ghost position {ghostCursor} / {target.length}.{ghost.trace.length === 0 && ' Average-pace replay.'}</p><button className="text-button" onClick={() => navigate('type')}>Leave race</button></> : pb ? <><p>Your best in this mode: <strong>{pb.wpm} WPM</strong></p><button className="text-button" onClick={rematch}>Race your best</button></> : <p className="muted">Complete this mode to set a best and unlock your ghost.</p>}</div>
             {localGhostUnavailable && <p role="status">Ghost unavailable. This record cannot be raced.</p>}
-          </> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
+          </div> : <section className="results" ref={resultRef} tabIndex={-1} aria-label="Test results" onKeyDown={(e) => { if (e.key === 'Tab' && !e.shiftKey && e.target === e.currentTarget) { e.preventDefault(); reset() } }}>
             <div className="result-heading"><h2>That's your run.</h2>{result.isBest && <span className="best-stamp">New personal best</span>}</div>
             {ghost && <div className="ghost-result"><h3>{ghostOutcome(result, ghost)}</h3><p>{challengedHandle && `Challenged ${challengedHandle}. `}Your {result.wpm} WPM / {result.acc}% accuracy versus ghost {ghost.wpm} WPM / {ghost.accuracy}% accuracy.</p><p>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM / {Number((result.acc - ghost.accuracy).toFixed(1)) >= 0 ? '+' : ''}{Number((result.acc - ghost.accuracy).toFixed(1))} accuracy points</p></div>}
             <div className="result-hero"><div><span className="metric-label">Words per minute</span><strong>{result.wpm}</strong></div><div><span className="metric-label">Accuracy</span><strong>{result.acc}<small>%</small></strong></div></div>
@@ -420,6 +423,7 @@ export default function App() {
             <div className="result-actions"><button className="brutal-btn primary" onClick={() => reset()}>{ghost ? 'Rematch' : 'Type again'} <kbd>Tab</kbd></button>{!ghost && pb && <button className="brutal-btn" onClick={rematch}>Race your best</button>}{ghost && <button className="brutal-btn" onClick={() => navigate('type')}>Leave race</button>}<button className="text-button" onClick={() => navigate('stats')}>View history</button></div>
             <div className="result-meta"><span>{formatMode(result.mode)}</span>{ghost && <span>{result.wpm - ghost.wpm >= 0 ? '+' : ''}{result.wpm - ghost.wpm} WPM vs ghost</span>}<p role="status">{saveStatus}</p></div>
           </section>}
+          </div>
         </>}
       </main>
       <footer className="app-footer"><span>KEYSMASH / A typing test.</span><span>{user ? `Signed in as ${user.email}` : 'No account needed. Just a keyboard.'}</span></footer>
