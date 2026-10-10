@@ -15,6 +15,7 @@ let sequence = 0
 const pending = new Map()
 let refreshFailure = null
 let codeUsed = false
+let fixtureGhost = null
 const savedRuns = []
 
 function fixtureSession() {
@@ -175,6 +176,7 @@ async function respond({ requestId, request }) {
     else body = fixtureSession()
   } else if (url.pathname.endsWith('/logout')) { status = 204; body = '' }
   else if (url.pathname.endsWith('/profiles')) body = [{ handle: null, published: false }]
+  else if (url.pathname.endsWith('/get_profile_ghost') && fixtureGhost) body = fixtureGhost
   else if (url.pathname.endsWith('/results') && request.method === 'POST') { savedRuns.push(JSON.parse(request.postData)); body = [] }
   else if (url.pathname.includes('/rest/v1/')) body = []
   await send('Fetch.fulfillRequest', { requestId, responseCode: status, responseHeaders: headers, body: Buffer.from(status === 204 ? '' : JSON.stringify(body)).toString('base64') })
@@ -541,6 +543,157 @@ test('custom results and local history remain available when storage is full', a
     await waitFor("document.querySelector('.stats-page')?.textContent.includes('Custom practice / 15s')")
   } finally {
     await evaluate('Storage.prototype.setItem = window.savedSetItem')
+  }
+})
+
+test('custom setup restores an applied passage and timer after refresh and browser reopening', async () => {
+  await resetGuest()
+  await click('Custom')
+  await fillTextarea('#custom-text', '  Remember,\n\tTHIS!  ')
+  await click('Use this text')
+  await click('30s')
+  await fillTextarea('#custom-text', 'Unapplied draft')
+  await reload()
+  await expectGuest()
+  await click('Custom')
+  await waitFor("document.querySelector('#custom-text').value === 'Remember, THIS!'")
+  assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '30')
+  assert.equal(await evaluate("document.querySelector('.typing-input').value"), '')
+  await stopBrowser()
+  await startBrowser()
+  await navigate('/')
+  await expectGuest()
+  await click('Custom')
+  await waitFor("document.querySelector('#custom-text').value === 'Remember, THIS!'")
+  assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '30')
+  assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('Remember, THIS! Remember, THIS!')"), true)
+})
+
+test('signed-in custom setup survives reopen while invalid drafts and standard timers do not replace it', async () => {
+  await resetGuest()
+  await navigate(callbackPath())
+  await expectSignedIn()
+  savedRuns.length = 0
+  await click('Custom')
+  await fillTextarea('#custom-text', 'Local, PRIVATE!')
+  await click('Use this text')
+  await click('15s')
+  const remembered = await evaluate("localStorage.getItem('keysmash-custom-setup-v1')")
+  assert.deepEqual(JSON.parse(remembered), { text: 'Local, PRIVATE!', duration: 15 })
+  for (const invalid of [' \n\t', 'x'.repeat(2001)]) {
+    await fillTextarea('#custom-text', invalid)
+    await click('Use this text')
+    assert.equal(await evaluate("localStorage.getItem('keysmash-custom-setup-v1')"), remembered)
+  }
+  await click('Words')
+  await click('120s')
+  assert.equal(await evaluate("localStorage.getItem('keysmash-custom-setup-v1')"), remembered)
+  await click('Custom')
+  assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '15')
+  await stopBrowser()
+  await startBrowser()
+  await navigate('/')
+  await expectSignedIn()
+  await click('Custom')
+  await waitFor("document.querySelector('#custom-text').value === 'Local, PRIVATE!'")
+  assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '15')
+  assert.equal(await evaluate("document.querySelector('.typing-input').value"), '')
+  await expireCustom(15, 'Local, PRIVATE! Local, PRIVATE!')
+  assert.equal(savedRuns.length, 0)
+  assert.equal(await evaluate("localStorage.getItem('keysmash-pb-v1')"), null)
+  await click('Type again Tab')
+  assert.equal(await evaluate("localStorage.getItem('keysmash-custom-setup-v1')"), remembered)
+})
+
+test('invalid saved custom settings recover without changing standard records', async () => {
+  await resetGuest()
+  const pbs = JSON.stringify({ 'time-60w-60s': { wpm: 42, acc: 98 } })
+  const history = JSON.stringify([{ id: 'standard', mode: 'time-60w-60s', wpm: 42, acc: 98, created_at: '2026-10-10T00:00:00Z' }])
+  await evaluate(`localStorage.setItem('keysmash-pb-v1', ${JSON.stringify(pbs)}); localStorage.setItem('keysmash-history-v1', ${JSON.stringify(history)})`)
+  const cases = [
+    [null, '', 60], ['{broken', '', 60], ['null', '', 60], ['[]', '', 60], ['42', '', 60],
+    [JSON.stringify({ text: ' \n\t ', duration: 7 }), '', 60],
+    [JSON.stringify({ text: 'x'.repeat(2001), duration: 120 }), '', 120],
+    [JSON.stringify({ text: 37, duration: 30 }), '', 30],
+    [JSON.stringify({ text: 'Valid!', duration: '30' }), 'Valid!', 60],
+  ]
+  for (const [stored, text, duration] of cases) {
+    await evaluate(stored === null ? "localStorage.removeItem('keysmash-custom-setup-v1')" : `localStorage.setItem('keysmash-custom-setup-v1', ${JSON.stringify(stored)})`)
+    await reload()
+    await expectGuest()
+    await click('Custom')
+    assert.equal(await evaluate("document.querySelector('#custom-text').value"), text)
+    assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), String(duration))
+    assert.equal(await evaluate("document.querySelector('.typing-input').disabled"), !text)
+    assert.equal(await evaluate("localStorage.getItem('keysmash-pb-v1')"), pbs)
+    assert.equal(await evaluate("localStorage.getItem('keysmash-history-v1')"), history)
+  }
+  await fillTextarea('#custom-text', 'Recovered.')
+  await click('Use this text')
+  await reload()
+  await expectGuest()
+  await click('Custom')
+  assert.equal(await evaluate("document.querySelector('#custom-text').value"), 'Recovered.')
+})
+
+test('custom setup storage failures explain visit-only retention and keep practice and retry usable at 320px', async () => {
+  for (const failure of ['blocked', 'full', 'read']) {
+    await resetGuest()
+    const source = failure === 'blocked'
+      ? "Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('Blocked', 'SecurityError') } })"
+      : failure === 'full'
+        ? "const nativeSet = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) { if (key === 'keysmash-custom-setup-v1') throw new DOMException('Full', 'QuotaExceededError'); return nativeSet.call(this, key, value) }"
+        : "const nativeGet = Storage.prototype.getItem; Storage.prototype.getItem = function(key) { if (key === 'keysmash-custom-setup-v1') throw new Error('Read unavailable'); return nativeGet.call(this, key) }"
+    const broken = await send('Page.addScriptToEvaluateOnNewDocument', { source })
+    await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false })
+    try {
+      await navigate('/')
+      await expectGuest()
+      await click('Custom')
+      if (failure !== 'full') assert.match(await evaluate("document.querySelector('.custom-editor [role=status]').textContent"), /will not be remembered/)
+      await fillTextarea('#custom-text', 'Still usable!')
+      await click('Use this text')
+      await click('15s')
+      assert.match(await evaluate("document.querySelector('.custom-editor [role=status]').textContent"), /will not be remembered/)
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true)
+      const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+      if (failure === 'full') await writeFile(join(tmpdir(), 'keysmash-custom-setup-warning-320.png'), Buffer.from(screenshot.data, 'base64'))
+      await expireCustom(15, 'Still usable! Still usable!')
+      assert.match(await evaluate("document.querySelector('.results').textContent"), /Custom practice \/ 15s/)
+      await click('Type again Tab')
+      assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '15')
+      assert.equal(await evaluate("document.querySelector('.typing-text').textContent.startsWith('Still usable!')"), true)
+      await click('Stats')
+      await waitFor("document.querySelector('.stats-page')?.textContent.includes('Custom practice / 15s')")
+    } finally {
+      await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: broken.identifier })
+      await send('Emulation.clearDeviceMetricsOverride')
+    }
+  }
+})
+
+test('returning from a standard ghost race restores the custom timer without changing remembered settings', async () => {
+  await resetGuest()
+  fixtureGhost = { handle: 'fixture', mode: 'time-60w-15s', word_count: 60, duration_s: 15, seed: 123, wpm: 40, accuracy: 98, word_set_version: 1 }
+  try {
+    await navigate('/u/fixture/race/time-60w-15s')
+    await waitFor("document.querySelector('.test-heading')?.textContent.includes('Race @fixture')")
+    await click('Type')
+    await click('Custom')
+    await fillTextarea('#custom-text', 'My custom practice.')
+    await click('Use this text')
+    await click('30s')
+    const remembered = await evaluate("localStorage.getItem('keysmash-custom-setup-v1')")
+    await evaluate('history.back()')
+    await waitFor("document.querySelector('.test-heading')?.textContent.includes('Race @fixture')")
+    assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '15')
+    await click('Type')
+    await waitFor("!!document.querySelector('#custom-text')")
+    assert.equal(await evaluate("document.querySelector('.clock strong').textContent"), '30')
+    await click('Use this text')
+    assert.equal(await evaluate("localStorage.getItem('keysmash-custom-setup-v1')"), remembered)
+  } finally {
+    fixtureGhost = null
   }
 })
 

@@ -11,7 +11,7 @@ import AccountMenu from './AccountMenu.jsx'
 import { loadOwnerGhost, loadOwnerProfile, loadPublicGhost } from './profiles.js'
 import PaceChart from './PaceChart.jsx'
 import { callbackUrl, loginStorageAvailable, supabase } from './supabase.js'
-import { customTarget, prepareCustomText } from './customPractice.js'
+import { customTarget, loadCustomSetup, prepareCustomText, saveCustomSetup } from './customPractice.js'
 
 const DURATIONS = [15, 30, 60, 120]
 const WORD_COUNTS = [25, 50, 60, 100]
@@ -20,13 +20,16 @@ const idleRun = () => ({ typed: '', presses: 0, pageIndex: 0, startedAt: null, n
 const currentPage = () => isRacePath(window.location.pathname) ? 'race' : window.location.pathname === '/profile' ? 'owner' : window.location.pathname === '/stats' ? 'stats' : window.location.pathname.startsWith('/u/') ? 'profile' : 'type'
 
 export default function App() {
+  const [rememberedSetup] = useState(loadCustomSetup)
   const [duration, setDuration] = useState(60)
   const [wordCount, setWordCount] = useState(60)
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
   const [wordSetVersion, setWordSetVersion] = useState(1)
   const [textSource, setTextSource] = useState('words')
-  const [customDraft, setCustomDraft] = useState('')
-  const [customText, setCustomText] = useState('')
+  const [customDraft, setCustomDraft] = useState(rememberedSetup.text)
+  const [customText, setCustomText] = useState(rememberedSetup.text)
+  const [customDuration, setCustomDuration] = useState(rememberedSetup.duration)
+  const [customSetupStatus, setCustomSetupStatus] = useState(rememberedSetup.warning)
   const [customError, setCustomError] = useState('')
   const standardWords = useMemo(() => streamWords(seed, wordCount, wordSetVersion), [seed, wordCount, wordSetVersion])
   const [run, setRun] = useState(idleRun)
@@ -287,7 +290,7 @@ export default function App() {
   useEffect(() => {
     if (page !== 'race') {
       if (cloudRaceActive.current) {
-        reset(duration, wordCount, Math.floor(Math.random() * 1e9), null)
+        reset(textSource === "custom" ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null)
         setRaceState({})
         cloudRaceActive.current = false
       }
@@ -366,7 +369,7 @@ export default function App() {
 
   function navigate(next) {
     const path = next.startsWith('/') ? next : next === 'stats' ? (user ? '/profile#history' : '/stats') : '/'
-    if (path === '/') reset(duration, wordCount, Math.floor(Math.random() * 1e9), null)
+    if (path === '/') reset(textSource === 'custom' ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null)
     window.history.pushState({}, '', path)
     setPage(currentPage())
     setRoute(path)
@@ -449,6 +452,8 @@ export default function App() {
     setCustomError(prepared.error || "");
     if (prepared.error) return;
     setCustomText(prepared.text);
+    setCustomDuration(duration);
+    setCustomSetupStatus(saveCustomSetup(prepared.text, duration));
     reset(duration, wordCount, Math.floor(Math.random() * 1e9), null);
   }
 
@@ -507,11 +512,17 @@ export default function App() {
                     <div className="segmented">
                       {["words", "custom"].map((source) => <button key={source} aria-pressed={textSource === source} onClick={() => {
                         setTextSource(source);
-                        reset(duration, wordCount, Math.floor(Math.random() * 1e9), null);
+                        reset(source === "custom" ? customDuration : duration, wordCount, Math.floor(Math.random() * 1e9), null);
                       }}>{source === "custom" ? "Custom" : "Words"}</button>)}
                     </div>
                   </fieldset>}
-            <fieldset disabled={(active && !custom) || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => reset(d, wordCount, Math.floor(Math.random() * 1e9), null)}>{d}<span>s</span></button>)}</div></fieldset>
+            <fieldset disabled={(active && !custom) || !!ghost}><legend>Time limit</legend><div className="segmented">{DURATIONS.map((d) => <button key={d} aria-pressed={d === duration} onClick={() => {
+                if (custom) {
+                  setCustomDuration(d)
+                  setCustomSetupStatus(saveCustomSetup(customText, d))
+                }
+                reset(d, wordCount, Math.floor(Math.random() * 1e9), null)
+              }}>{d}<span>s</span></button>)}</div></fieldset>
             {!custom && <fieldset disabled={active || !!ghost}><legend>Word count</legend><div className="segmented">{WORD_COUNTS.map((count) => <button key={count} aria-pressed={count === wordCount} onClick={() => reset(duration, count, Math.floor(Math.random() * 1e9), null)}>{count}</button>)}</div></fieldset>}
             <p className="settings-note">{custom ? 'Custom practice repeats until the timer ends. Scores stay on this device.' : ghost ? 'Race text and settings are locked.' : active ? 'Finish or restart to change modes.' : 'Finish the words or run out the clock.'}</p>
           </div>
@@ -521,6 +532,7 @@ export default function App() {
                   <p id="custom-text-help">Up to 2,000 entered characters, including whitespace. Emoji may count as two characters (UTF-16). Applying text trims and joins whitespace into single spaces.</p>
                   <p id="custom-text-count">{customDraft.length.toLocaleString()} / 2,000 characters</p>
                   {customError && <p role="alert">{customError}</p>}
+                  <p role="status" aria-live="polite">{customSetupStatus}</p>
                   <button className="brutal-btn primary" onClick={applyCustomText}>Use this text</button>
                 </div>}
           {!result && <div className="live-strip">
